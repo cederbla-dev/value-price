@@ -6,234 +6,251 @@ import matplotlib as mpl
 import requests
 import io
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import warnings
 
-# 1. 환경 설정 및 경고 무시
+# 1. 설정 및 한글 폰트(가능한 경우) 대응
 warnings.filterwarnings("ignore")
-st.set_page_config(page_title="미국주식 통합 분석 대시보드", layout="wide")
-
-# 한글 깨짐 방지 설정 (Streamlit 환경은 보통 영문 폰트이므로 기본 폰트 사용)
-mpl.rcParams['axes.unicode_minus'] = False
+st.set_page_config(page_title="미국주식 통합 분석 시스템", layout="wide")
+plt.style.use('seaborn-v0_8-whitegrid')
 
 # ==========================================
-# [공통 함수] 데이터 수집 및 유틸리티 (캐싱 및 방어로직 강화)
+# [Core] 데이터 수집 및 전처리 엔진
 # ==========================================
 
 @st.cache_data(ttl=3600)
-def get_choicestock_data(ticker, data_type='EPS'):
-    """
-    ChoiceStock에서 과거 실적 데이터를 크롤링합니다.
-    방어 로직: 헤더 추가, 여러 파서 시도, 예외 처리 강화
-    """
+def fetch_stock_data(ticker):
+    """주가, 과거 EPS/PER(ChoiceStock), 예측치(Yahoo) 통합 수집"""
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     url = f"https://www.choicestock.co.kr/search/invest/{ticker}/MRQ"
-    # 실제 브라우저처럼 보이기 위한 User-Agent 설정
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+        # A. ChoiceStock 크롤링
+        res = requests.get(url, headers=headers, timeout=10)
+        dfs = pd.read_html(io.StringIO(res.text))
         
-        # pandas의 read_html이 lxml이나 html5lib를 사용하도록 설정
-        # io.StringIO를 사용하여 직접 텍스트를 전달
-        dfs = pd.read_html(io.StringIO(response.text))
+        eps_raw = pd.DataFrame()
+        per_raw = pd.DataFrame()
         
-        target_df = None
         for df in dfs:
-            if df.shape[1] > 0 and df.iloc[:, 0].astype(str).str.contains(data_type).any():
-                target_df = df.set_index(df.columns[0])
-                break
+            if df.iloc[:, 0].astype(str).str.contains('EPS').any():
+                temp = df.set_index(df.columns[0]).filter(like='EPS', axis=0).transpose()
+                temp.index = pd.to_datetime(temp.index, format='%y.%m.%d', errors='coerce')
+                eps_raw = temp.dropna().sort_index()
+                eps_raw.columns = ['EPS']
+            if df.iloc[:, 0].astype(str).str.contains('PER').any():
+                temp = df.set_index(df.columns[0]).filter(like='PER', axis=0).transpose()
+                temp.index = pd.to_datetime(temp.index, format='%y.%m.%d', errors='coerce')
+                per_raw = temp.dropna().sort_index()
+                per_raw.columns = ['PER']
         
-        if target_df is None:
-            return pd.DataFrame()
-
-        # 데이터 전처리: 행/열 전환 및 날짜 인덱스화
-        raw_data = target_df[target_df.index.str.contains(data_type, na=False)].transpose()
-        raw_data.index = pd.to_datetime(raw_data.index, format='%y.%m.%d', errors='coerce')
-        raw_data = raw_data.dropna().sort_index()
-        
-        # 숫자 변환 (콤마 제거)
-        col_name = 'Value'
-        raw_data.columns = [col_name]
-        raw_data[col_name] = pd.to_numeric(raw_data[col_name].astype(str).str.replace(',', ''), errors='coerce')
-        
-        # 2017년 1월 1일 이후 데이터만 유지 (사용자 요청 사항)
-        raw_data = raw_data[raw_data.index >= "2017-01-01"]
-        
-        return raw_data
-
-    except Exception as e:
-        st.error(f"{ticker}의 {data_type} 데이터를 가져오는 중 오류 발생: {e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=3600)
-def get_yahoo_price(ticker):
-    """2017년부터 현재까지의 주가 수집"""
-    try:
+        # B. Yahoo 주가 및 예측치
         stock = yf.Ticker(ticker)
-        df = stock.history(start="2017-01-01")
-        if df.empty:
-            return pd.Series()
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-        return df['Close']
-    except:
-        return pd.Series()
-
-@st.cache_data(ttl=3600)
-def get_yahoo_estimates(ticker):
-    """Yahoo Finance 향후 2분기 EPS 예측치 수집"""
-    try:
-        stock = yf.Ticker(ticker)
+        price = stock.history(start="2016-10-01")['Close']
+        if price.index.tz is not None: price.index = price.index.tz_localize(None)
+        
         est = stock.earnings_estimate
+        est_dict = {}
         if est is not None and not est.empty:
-            # avg 열의 0q(현재분기), +1q(다음분기), 0y(올해연간)
-            return {
+            est_dict = {
                 'curr_q': est.loc['0q', 'avg'] if '0q' in est.index else None,
                 'next_q': est.loc['+1q', 'avg'] if '+1q' in est.index else None,
                 'curr_y': est.loc['0y', 'avg'] if '0y' in est.index else None
             }
-    except:
-        pass
-    return {}
+            
+        return eps_raw, per_raw, price, est_dict
+    except Exception as e:
+        st.error(f"Error fetching {ticker}: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.Series(), {}
 
 # ==========================================
-# [화면 구성] 모듈별 렌더링 함수
+# [Module 1] 개별 종목 정밀 분석 (File 6, 8, 10, 11 통합)
 # ==========================================
 
-def render_valuation_master():
-    st.subheader("💎 개별 종목 정밀 밸류에이션")
+def run_single_valuation():
+    st.header("💎 종목별 밸류에이션 및 적정주가")
     
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        ticker = st.text_input("티커(Ticker) 입력", value="AAPL").upper().strip()
-        include_est = st.selectbox("미래 예측치 포함", ["포함 안 함", "현재 분기만", "다음 분기까지"])
-    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1: ticker = st.text_input("티커 입력", "AAPL").upper().strip()
+    with col2: base_year = st.number_input("기준 시작 연도", 2017, 2025, 2017)
+    with col3: include_est = st.radio("예측치 포함", ["None", "Current Q", "Next Q"], horizontal=True)
+
     if not ticker: return
 
-    # 데이터 로드
-    with st.spinner(f"{ticker} 데이터를 분석 중입니다..."):
-        eps_data = get_choicestock_data(ticker, 'EPS')
-        price_data = get_yahoo_price(ticker)
-        estimates = get_yahoo_estimates(ticker)
+    eps_df, per_df, price_ser, ests = fetch_stock_data(ticker)
+    if eps_df.empty: return
 
-    if eps_data.empty or price_data.empty:
-        st.warning("데이터를 불러올 수 없습니다. 티커가 정확한지 확인해 주세요.")
-        return
+    # --- 데이터 병합 및 예측치 반영 ---
+    eps_combined = eps_df[eps_df.index >= f"{base_year}-01-01"].copy()
+    eps_combined['Type'] = 'Actual'
+    
+    if include_est != "None" and ests:
+        last_dt = eps_combined.index[-1]
+        if ests['curr_q']:
+            eps_combined.loc[last_dt + pd.DateOffset(months=3)] = [ests['curr_q'], 'Estimate']
+        if include_est == "Next Q" and ests['next_q']:
+            eps_combined.loc[last_dt + pd.DateOffset(months=6)] = [ests['next_q'], 'Estimate']
 
-    # 분석 로직 통합
-    tab1, tab2, tab3 = st.tabs(["연도별 적정주가", "PER 밴드", "PEG 분석"])
+    tab1, tab2, tab3 = st.tabs(["📊 적정주가 시뮬레이션", "📈 PER 밴드 분석", "📋 연간 요약 & PEG"])
 
     with tab1:
-        # 연도별 기준점 밸류에이션 (File 6 로직)
-        st.write("### 연도별 시작점 기준 적정주가 판단")
+        st.subheader("연도별 시작점 기준 Fair Value 분석")
         
-        # 월말 주가로 리샘플링하여 EPS와 날짜 맞춤
-        price_m = price_data.resample('M').last()
-        combined = pd.DataFrame({'EPS': eps_data['Value']})
-        combined = combined.join(price_m, how='inner').dropna()
+        # 주가 데이터 결합 (월말 기준)
+        price_m = price_ser.resample('M').last()
+        df_val = eps_combined.join(price_m, how='left')
+        df_val['Close'] = df_val['Close'].ffill() # 주가 누락 방지
         
-        # 예측치 추가
-        if include_est != "포함 안 함":
-            last_date = combined.index[-1]
-            curr_p = combined['Close'].iloc[-1]
-            if estimates.get('curr_q'):
-                combined.loc[last_date + pd.DateOffset(months=3)] = [estimates['curr_q'], curr_p]
-            if include_est == "다음 분기까지" and estimates.get('next_q'):
-                combined.loc[last_date + pd.DateOffset(months=6)] = [estimates['next_q'], curr_p]
+        summary_rows = []
+        target_date = df_val.index[-1]
+        current_price = price_ser.iloc[-1]
 
-        results = []
-        for year in range(2017, datetime.now().year + 1):
-            start_key = f"{year}-01"
-            subset = combined[combined.index >= start_key].copy()
-            if len(subset) < 2: continue
+        # 각 연도별로 적정주가 계산 루프 (File 6 로직)
+        for yr in range(base_year, datetime.now().year + 1):
+            subset = df_val[df_val.index >= f"{yr}-01-01"]
+            if len(subset) < 2 or subset.iloc[0]['EPS'] <= 0: continue
             
             base_eps = subset.iloc[0]['EPS']
-            base_price = subset.iloc[0]['Close']
-            if base_eps <= 0: continue
+            base_p = subset.iloc[0]['Close']
+            mult = base_p / base_eps
             
-            per_factor = base_price / base_eps
-            subset['Fair_Value'] = subset['EPS'] * per_factor
+            fair_val = subset['EPS'].iloc[-1] * mult
+            gap = ((current_price - fair_val) / fair_val) * 100
             
-            final_actual = subset['Close'].iloc[-1]
-            final_fair = subset['Fair_Value'].iloc[-1]
-            gap = ((final_actual - final_fair) / final_fair) * 100
-            
-            results.append({
-                "기준 연도": year,
-                "기준 PER": round(per_factor, 1),
-                "현재 적정가": round(final_fair, 2),
-                "괴리율(%)": round(gap, 2),
-                "상태": "고평가" if gap > 0 else "저평가"
+            summary_rows.append({
+                "기준연도": yr, "기준PER": f"{mult:.1f}x", 
+                "Target EPS": f"${subset['EPS'].iloc[-1]:.2f}",
+                "적정주가": round(fair_val, 2), "현재가": round(current_price, 2),
+                "괴리율": f"{gap:+.2f}%", "판단": "고평가" if gap > 0 else "저평가"
             })
 
-        st.table(pd.DataFrame(results))
-
-    with tab2:
-        # PER 추세 분석 (File 8 로직)
-        per_df = get_choicestock_data(ticker, 'PER')
-        if not per_df.empty:
-            avg_per = per_df['Value'].mean()
-            med_per = per_df['Value'].median()
-            curr_per = per_df['Value'].iloc[-1]
+        st.table(pd.DataFrame(summary_rows))
+        
+        # 메인 그래프 (첫 번째 기준 연도 사용)
+        if summary_rows:
+            first_yr = summary_rows[0]['기준연도']
+            mult = float(summary_rows[0]['기준PER'].replace('x',''))
+            df_plot = df_val[df_val.index >= f"{first_yr}-01-01"].copy()
+            df_plot['Fair'] = df_plot['EPS'] * mult
             
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(per_df.index, per_df['Value'], marker='o', label='PER Trend')
-            ax.axhline(avg_per, color='red', linestyle='--', label=f'Mean: {avg_per:.2f}')
-            ax.axhline(med_per, color='purple', linestyle='-.', label=f'Median: {med_per:.2f}')
-            ax.set_title(f"{ticker} PER Band (Current: {curr_per:.2f})")
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.plot(df_plot.index, df_plot['Close'], label='Market Price', marker='o', color='royalblue')
+            ax.plot(df_plot.index, df_plot['Fair'], label=f'Fair Value ({mult:.1f}x)', linestyle='--', color='crimson')
+            
+            # 예측 영역 배경 표시
+            est_idx = df_plot[df_plot['Type'] == 'Estimate'].index
+            if not est_idx.empty:
+                ax.axvspan(est_idx[0] - pd.DateOffset(days=15), est_idx[-1] + pd.DateOffset(days=15), color='orange', alpha=0.1, label='Estimates')
+            
+            ax.set_title(f"{ticker} Valuation Chart (Base: {first_yr})")
             ax.legend()
             st.pyplot(fig)
 
-    with tab3:
-        # PEG 분석 (File 11 로직)
-        if len(eps_data) >= 8:
-            ttm_now = eps_data['Value'].iloc[-4:].sum()
-            curr_price = price_data.iloc[-1]
-            curr_per = curr_price / ttm_now
+    with tab2:
+        # File 8: PER Mean vs Median
+        st.subheader("과거 PER 추이 및 통계")
+        p_sub = per_df[per_df.index >= f"{base_year}-01-01"]
+        if not p_sub.empty:
+            avg_p = p_sub['PER'].mean()
+            med_p = p_sub['PER'].median()
             
-            # 3년전 TTM 대비 성장률
-            ttm_3y_ago = eps_data['Value'].iloc[-12:-8].sum()
-            if ttm_3y_ago > 0:
-                cagr = ((ttm_now / ttm_3y_ago) ** (1/3) - 1) * 100
-                peg = curr_per / cagr if cagr > 0 else 0
-                st.metric("3년 CAGR 기준 PEG", round(peg, 2), f"{cagr:.1f}% 성장")
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.plot(p_sub.index, p_sub['PER'], marker='o', color='darkslategray', label='PER')
+            ax.axhline(avg_p, color='red', linestyle='--', label=f'Mean: {avg_p:.2f}')
+            ax.axhline(med_p, color='purple', linestyle='-.', label=f'Median: {med_p:.2f}')
+            ax.legend()
+            st.pyplot(fig)
+            st.write(f"현재 PER: **{p_sub['PER'].iloc[-1]:.2f}** | 평균 대비: **{((p_sub['PER'].iloc[-1]/avg_p)-1)*100:+.1f}%**")
 
-def render_market_analysis():
-    st.subheader("📊 섹터 및 지수 성과 비교")
-    all_tickers = ["SPY", "QQQ", "XLK", "XLV", "XLY", "XLF", "XLI", "XLP", "XLE", "XLC", "XLB", "XLU", "XLRE"]
-    selected = st.multiselect("비교 대상 선택", all_tickers, default=["SPY", "QQQ", "XLK"])
+    with tab3:
+        # File 10, 11: Annual Summary & PEG
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.write("### 4분기 합산(TTM) 분석")
+            ttm_eps = eps_df['EPS'].rolling(4).sum().dropna()
+            st.dataframe(ttm_eps.iloc[::-1].head(10))
+        with col_b:
+            st.write("### PEG 분석 (Price/Earnings to Growth)")
+            if len(eps_df) >= 8:
+                curr_ttm = eps_df['EPS'].iloc[-4:].sum()
+                past_ttm = eps_df['EPS'].iloc[-8:-4].sum()
+                growth = ((curr_ttm / past_ttm) - 1) * 100
+                curr_per = price_ser.iloc[-1] / curr_ttm
+                peg = curr_per / growth if growth > 0 else 0
+                st.metric("Growth (YoY)", f"{growth:.1f}%")
+                st.metric("PEG Ratio", f"{peg:.2f}")
+
+# ==========================================
+# [Module 2] 비교 분석 (File 9, 12, 13 통합)
+# ==========================================
+
+def run_comparison():
+    st.header("⚖️ 종목 간 비교 분석")
     
-    start_date = st.date_input("비교 시작일", value=datetime(2017, 1, 1))
+    comp_mode = st.radio("비교 모드", ["EPS 성장률 비교", "섹터/지수 수익률", "상대 PER 추세"], horizontal=True)
     
-    if st.button("수익률 차트 생성"):
-        combined_price = pd.DataFrame()
-        for t in selected:
-            s = yf.Ticker(t).history(start=start_date)['Close']
-            if not s.empty:
-                # 시작 시점 100으로 정규화
-                combined_price[t] = (s / s.iloc[0]) * 100
+    tickers_input = st.text_input("비교 티커 (쉼표로 구분)", "AAPL, MSFT, GOOGL, NVDA")
+    t_list = [x.strip().upper() for x in tickers_input.split(',')]
+    start_date = st.date_input("분석 시작일", datetime(2017, 1, 1))
+
+    if st.button("비교 분석 실행"):
+        fig, ax = plt.subplots(figsize=(12, 6))
         
-        if not combined_price.empty:
-            st.line_chart(combined_price)
+        if comp_mode == "EPS 성장률 비교":
+            # File 13: 정규화된 EPS 성장 추세
+            for t in t_list:
+                e_df, _, _, _ = fetch_stock_data(t)
+                if e_df.empty: continue
+                sub = e_df[e_df.index >= pd.to_datetime(start_date)]
+                if sub.empty: continue
+                norm_growth = (sub['EPS'] / sub['EPS'].iloc[0]) * 100
+                ax.plot(norm_growth.index, norm_growth, marker='o', label=f"{t} (Last: {norm_growth.iloc[-1]:.0f})")
+            ax.set_title("Normalized EPS Growth (Base = 100)")
+            
+        elif comp_mode == "섹터/지수 수익률":
+            # File 12: 주가 성과 비교
+            for t in t_list:
+                p = yf.Ticker(t).history(start=start_date)['Close']
+                if p.empty: continue
+                norm_p = (p / p.iloc[0]) * 100
+                ax.plot(norm_p.index, norm_p, label=f"{t} ({norm_p.iloc[-1]:.1f})")
+            ax.set_title("Price Performance (Base = 100)")
+
+        elif comp_mode == "상대 PER 추세":
+            # File 9: PER 추세 비교
+            for t in t_list:
+                _, p_df, _, _ = fetch_stock_data(t)
+                if p_df.empty: continue
+                sub = p_df[p_df.index >= pd.to_datetime(start_date)]
+                if sub.empty: continue
+                norm_per = (sub['PER'] / sub['PER'].iloc[0]) * 100
+                ax.plot(norm_per.index, norm_per, label=f"{t} (Current PER: {sub['PER'].iloc[-1]:.1f})")
+            ax.set_title("Normalized PER Trend (Base = 100)")
+
+        ax.axhline(100, color='black', lw=1, ls='--')
+        ax.legend()
+        st.pyplot(fig)
 
 # ==========================================
-# 메인 실행부
+# 메인 메뉴 관리
 # ==========================================
+
 def main():
-    st.sidebar.title("Stock Dashboard")
-    page = st.sidebar.selectbox("메뉴 선택", ["홈", "종목 밸류에이션", "시장 성과 비교"])
+    st.sidebar.title("🇺🇸 주식 분석 터미널")
+    menu = st.sidebar.selectbox("메뉴 선택", ["홈", "개별 종목 밸류에이션", "종목 비교 분석"])
     
-    if page == "홈":
-        st.title("🍎 미국주식 투자 분석 통합 앱")
-        st.write("왼쪽 사이드바에서 메뉴를 선택해 주세요.")
-        st.info("모든 분석은 2017년 1월 1일 이후 데이터를 기준으로 합니다.")
-    elif page == "종목 밸류에이션":
-        render_valuation_master()
-    elif page == "시장 성과 비교":
-        render_market_analysis()
+    if menu == "홈":
+        st.title("Welcome to Investment Dashboard")
+        st.markdown("""
+        이 대시보드는 업로드하신 7개의 파이썬 분석 코드를 하나로 통합한 버전입니다.
+        - **2017년 이후 데이터**만 참조하도록 설계되었습니다.
+        - **Yahoo Finance**의 예측치(Estimates)와 **ChoiceStock**의 확정 실적을 결합합니다.
+        - **배포 팁:** GitHub에 `app.py`와 `requirements.txt`만 있으면 바로 작동합니다.
+        """)
+    elif menu == "개별 종목 밸류에이션":
+        run_single_valuation()
+    elif menu == "종목 비교 분석":
+        run_comparison()
 
 if __name__ == "__main__":
     main()
