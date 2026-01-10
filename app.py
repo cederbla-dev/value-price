@@ -13,6 +13,10 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="미국주식 통합 분석 시스템", layout="wide")
 plt.style.use('seaborn-v0_8-whitegrid')
 
+# 모든 숫자를 소수점 두 자리로 포맷팅하는 유틸리티
+def format_num(val):
+    return round(float(val), 2)
+
 # ==========================================
 # [Shared] 데이터 수집 및 동기화 함수
 # ==========================================
@@ -78,7 +82,7 @@ def run_single_valuation():
             plot_df = per_s[per_s.index >= f"{base_year}-01-01"]
             fig, ax = plt.subplots(figsize=(12, 5))
             ax.plot(plot_df.index, plot_df, marker='o', label=f"{ticker} PER")
-            ax.axhline(plot_df.mean(), color='red', ls='--', label=f'Mean: {plot_df.mean():.2f}')
+            ax.axhline(plot_df.mean(), color='red', ls='--', label=f'Mean: {format_num(plot_df.mean())}')
             ax.legend(); st.pyplot(fig)
 
 # ==========================================
@@ -115,65 +119,57 @@ def run_comparison():
                 valid_indices = [indexed_df.index.get_loc(dt) for dt in series.index]
                 forecast_count = (1 if q1 else 0) + (1 if q2 else 0)
                 if forecast_count > 0:
-                    ax.plot(valid_indices[:-forecast_count], series.values[:-forecast_count], marker='o', label=ticker)
+                    ax.plot(valid_indices[:-forecast_count], series.values[:-forecast_count], marker='o', label=f"{ticker} ({format_num(series.iloc[-1])})")
                     ax.plot(valid_indices[-forecast_count-1:], series.values[-forecast_count-1:], ls='--', marker='x', alpha=0.7)
                 else:
-                    ax.plot(valid_indices, series.values, marker='o', label=ticker)
+                    ax.plot(valid_indices, series.values, marker='o', label=f"{ticker} ({format_num(series.iloc[-1])})")
             ax.set_xticks(range(len(indexed_df))); ax.set_xticklabels(x_labels, rotation=45)
             ax.axhline(100, color='black', alpha=0.5); ax.legend(); st.pyplot(fig)
 
 # ==========================================
-# [Module 3] 섹터 수익률 (분기 선택 로직 반영)
+# [Module 3] 섹터 수익률 (% 변환 및 소수점 2자리 적용)
 # ==========================================
 
 def run_sector_perf():
     st.header("📊 섹터 및 지수 수익률 분석 (분기 기준)")
     
-    # 1. 티커 선택
     all_tickers = ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY", "SPY", "QQQ"]
     selected = st.multiselect("분석할 ETF 선택", all_tickers, default=["SPY", "QQQ", "XLK"])
     
-    # 2. 시작 시점 선택 (연도/분기 로직)
     col1, col2 = st.columns(2)
     with col1:
         sel_year = st.selectbox("시작 연도", range(2017, datetime.now().year + 1))
     with col2:
         sel_quarter = st.selectbox("시작 분기", [1, 2, 3, 4])
     
-    # 제공해주신 q_map 로직 적용
     q_map = {1: "-01-01", 2: "-04-01", 3: "-07-01", 4: "-10-01"}
     start_date_str = f"{sel_year}{q_map[sel_quarter]}"
 
     if st.button("수익률 차트 생성"):
         combined_price = pd.DataFrame()
         for t in selected:
-            # 월간 데이터 수집 (수정주가 적용)
             df = yf.Ticker(t).history(start="2017-01-01", interval="1mo", auto_adjust=True)
             if not df.empty:
                 df.index = df.index.strftime('%Y-%m-%d')
                 combined_price[t] = df['Close']
         
         if not combined_price.empty:
-            # 선택한 시작일이 데이터에 없는 경우 가장 가까운 미래 날짜 선택
             available_dates = combined_price.index[combined_price.index >= start_date_str]
             if len(available_dates) == 0:
-                st.error("해당 시점 이후의 데이터가 없습니다.")
-                return
+                st.error("해당 시점 이후의 데이터가 없습니다."); return
             
             base_date = available_dates[0]
-            # 정규화 (Base=100)
+            # 정규화 (지수형태: 100 기준)
             norm_df = (combined_price.loc[base_date:] / combined_price.loc[base_date]) * 100
             
-            # 최종 수익률 기준 정렬 (범례 가독성)
-            last_val = norm_df.iloc[-1].sort_values(ascending=False)
-            
+            # 그래프 출력
             fig, ax = plt.subplots(figsize=(15, 8))
-            for ticker in last_val.index:
+            last_val_idx = norm_df.iloc[-1].sort_values(ascending=False)
+            for ticker in last_val_idx.index:
                 lw = 4 if ticker in ["SPY", "QQQ"] else 2
                 zo = 5 if ticker in ["SPY", "QQQ"] else 2
-                ax.plot(norm_df.index, norm_df[ticker], label=f"{ticker} ({last_val[ticker]:.1f})", linewidth=lw, zorder=zo)
+                ax.plot(norm_df.index, norm_df[ticker], label=f"{ticker} ({format_num(last_val_idx[ticker])})", linewidth=lw, zorder=zo)
             
-            # x축 틱 설정 (분기별: 1, 4, 7, 10월)
             q_ticks = [d for d in norm_df.index if d.endswith(('-01-01', '-04-01', '-07-01', '-10-01'))]
             ax.set_xticks(q_ticks if q_ticks else norm_df.index[::3])
             plt.xticks(rotation=45)
@@ -182,8 +178,14 @@ def run_sector_perf():
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             st.pyplot(fig)
             
-            st.write(f"### 🏆 {base_date} 이후 누적 성과 순위")
-            st.dataframe(last_val)
+            # --- [수정 부분] 표 내용 변경: 지수 -> 순수 수익률(%) ---
+            st.write(f"### 🏆 {base_date} 이후 누적 수익률 (%)")
+            # 100을 빼서 수익률로 변환하고 소수점 2자리 제한
+            performance_pct = (last_val_idx - 100).apply(format_num)
+            
+            # 표 가독성을 위해 데이터프레임으로 변환
+            perf_df = pd.DataFrame(performance_pct).rename(columns={0: "수익률 (%)"})
+            st.table(perf_df)
 
 # ==========================================
 # 메인 메뉴
@@ -194,7 +196,7 @@ def main():
     menu = st.sidebar.selectbox("메뉴 선택", ["홈", "개별 종목 밸류에이션", "종목 비교 분석 (Sync)", "섹터/지수 수익률"])
     if menu == "홈":
         st.title("US Stock Analysis System")
-        st.info("9, 12, 13번 파일의 모든 로직(회계주기 동기화 및 분기별 수익률)이 통합되었습니다.")
+        st.info("모든 수치는 소수점 두 자리까지 표시되며, 수익률은 % 단위로 계산됩니다.")
     elif menu == "개별 종목 밸류에이션": run_single_valuation()
     elif menu == "종목 비교 분석 (Sync)": run_comparison()
     elif menu == "섹터/지수 수익률": run_sector_perf()
