@@ -67,13 +67,11 @@ def run_single_valuation():
     eps_df, per_df, price_ser, ests = fetch_stock_data(ticker)
     if eps_df.empty: st.error("데이터를 찾을 수 없습니다."); return
 
-    # 예측치 반영 로직
     eps_combined = eps_df[eps_df.index >= f"{base_year}-01-01"].copy()
-    eps_combined['Type'] = 'Actual'
     if include_est != "None" and ests:
         last_dt = eps_combined.index[-1]
-        if ests['curr_q']: eps_combined.loc[last_dt + pd.DateOffset(months=3)] = [ests['curr_q'], 'Estimate']
-        if include_est == "Next Q" and ests['next_q']: eps_combined.loc[last_dt + pd.DateOffset(months=6)] = [ests['next_q'], 'Estimate']
+        if ests['curr_q']: eps_combined.loc[last_dt + pd.DateOffset(months=3)] = [ests['curr_q']]
+        if include_est == "Next Q" and ests['next_q']: eps_combined.loc[last_dt + pd.DateOffset(months=6)] = [ests['next_q']]
 
     tab1, tab2 = st.tabs(["📊 적정주가 시뮬레이션", "📈 PER 밴드 및 통계"])
     with tab1:
@@ -98,17 +96,17 @@ def run_single_valuation():
             df_plot = df_val[df_val.index >= f"{summary_rows[0]['기준연도']}-01-01"].copy()
             df_plot['Fair'] = df_plot['EPS'] * mult_first
             ax.plot(df_plot.index, df_plot['Close'], label='Price', marker='o'); ax.plot(df_plot.index, df_plot['Fair'], label='Fair', ls='--')
-            st.pyplot(fig)
+            ax.legend(); st.pyplot(fig)
 
     with tab2:
         p_sub = per_df[per_df.index >= f"{base_year}-01-01"]
         if not p_sub.empty:
             fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(p_sub.index, p_sub['PER'], marker='o'); ax.axhline(p_sub['PER'].mean(), color='red', ls='--')
-            st.pyplot(fig)
+            ax.plot(p_sub.index, p_sub['PER'], marker='o'); ax.axhline(p_sub['PER'].mean(), color='red', ls='--', label='Mean')
+            ax.legend(); st.pyplot(fig)
 
 # ==========================================
-# [Module 2] 종목 비교 분석 (예측치 옵션 추가)
+# [Module 2] 종목 비교 분석 (EPS/PER 예측 반영)
 # ==========================================
 
 def run_comparison():
@@ -127,46 +125,46 @@ def run_comparison():
     if st.button("비교 분석 실행"):
         fig, ax = plt.subplots(figsize=(12, 6))
         for t in t_list:
-            e_df, p_df, _, ests = fetch_stock_data(t)
-            target_df = e_df if comp_mode == "EPS 성장률 비교" else p_df
+            e_df, p_df, price_ser, ests = fetch_stock_data(t)
+            if e_df.empty or p_df.empty or price_ser.empty: continue
+            
+            working_eps = e_df[e_df.index >= pd.to_datetime(start_date)].copy()
+            working_per = p_df[p_df.index >= pd.to_datetime(start_date)].copy()
+            current_price = price_ser.iloc[-1]
+            
+            # 예측치 반영 로직 (EPS 및 PER 동시 계산)
+            if include_est_comp != "None" and ests:
+                last_dt = working_eps.index[-1]
+                if ests.get('curr_q'):
+                    working_eps.loc[last_dt + pd.DateOffset(months=3)] = [ests['curr_q']]
+                    fwd_per = current_price / ests['curr_q'] if ests['curr_q'] > 0 else np.nan
+                    working_per.loc[last_dt + pd.DateOffset(months=3)] = [fwd_per]
+                if include_est_comp == "Next Q" and ests.get('next_q'):
+                    working_eps.loc[last_dt + pd.DateOffset(months=6)] = [ests['next_q']]
+                    fwd_per = current_price / ests['next_q'] if ests['next_q'] > 0 else np.nan
+                    working_per.loc[last_dt + pd.DateOffset(months=6)] = [fwd_per]
+
+            display_df = working_eps if comp_mode == "EPS 성장률 비교" else working_per
             col_name = 'EPS' if comp_mode == "EPS 성장률 비교" else 'PER'
             
-            if target_df.empty: continue
+            # 정규화 및 그래프 그리기
+            norm_series = (display_df[col_name] / display_df[col_name].dropna().iloc[0]) * 100
+            actual_len = len(e_df[e_df.index >= pd.to_datetime(start_date)])
             
-            # 비교용 데이터프레임 생성
-            working_df = target_df[target_df.index >= pd.to_datetime(start_date)].copy()
-            
-            # [수정] 비교 모드에서도 예측치 반영
-            if comp_mode == "EPS 성장률 비교" and include_est_comp != "None" and ests:
-                last_dt = working_df.index[-1]
-                if ests['curr_q']: working_df.loc[last_dt + pd.DateOffset(months=3)] = [ests['curr_q']]
-                if include_est_comp == "Next Q" and ests['next_q']: working_df.loc[last_dt + pd.DateOffset(months=6)] = [ests['next_q']]
-            
-            if working_df.empty: continue
-            
-            # 정규화 (Base=100)
-            norm_series = (working_df[col_name] / working_df[col_name].iloc[0]) * 100
-            
-            # 그래프 그리기 (실선+점선 구분)
-            actual_data = norm_series.iloc[:len(target_df[target_df.index >= pd.to_datetime(start_date)])]
-            est_data = norm_series.iloc[len(actual_data)-1:]
-            
-            line, = ax.plot(actual_data.index, actual_data, marker='o', label=f"{t}")
-            if len(est_data) > 1:
-                ax.plot(est_data.index, est_data, ls='--', marker='x', color=line.get_color())
+            line, = ax.plot(norm_series.iloc[:actual_len].index, norm_series.iloc[:actual_len], marker='o', label=t)
+            if len(norm_series) > actual_len:
+                ax.plot(norm_series.iloc[actual_len-1:].index, norm_series.iloc[actual_len-1:], ls='--', marker='x', color=line.get_color())
 
         ax.axhline(100, color='black', lw=1, ls='--')
         ax.set_title(f"Normalized {comp_mode} (Base=100)")
         ax.legend(); st.pyplot(fig)
 
 # ==========================================
-# [Module 3] 섹터 및 지수 수익률 (독립 페이지)
+# [Module 3] 섹터 및 지수 수익률
 # ==========================================
 
 def run_sector_perf():
     st.header("📊 섹터 및 지수 수익률 분석")
-    st.info("ETF 주가 성과를 비교합니다. (실적 예측치와 무관한 주가 데이터 기준)")
-    
     all_tickers = ["SPY", "QQQ", "XLK", "XLV", "XLY", "XLF", "XLI", "XLP", "XLE", "XLC", "XLB", "XLU", "XLRE"]
     selected = st.multiselect("비교 대상 선택", all_tickers, default=["SPY", "QQQ", "XLK"])
     start_date = st.date_input("비교 시작일", value=datetime(2017, 1, 1))
@@ -175,15 +173,12 @@ def run_sector_perf():
         combined_price = pd.DataFrame()
         for t in selected:
             s = yf.Ticker(t).history(start=start_date)['Close']
-            if not s.empty:
-                combined_price[t] = (s / s.iloc[0]) * 100
+            if not s.empty: combined_price[t] = (s / s.iloc[0]) * 100
         if not combined_price.empty:
             st.line_chart(combined_price)
-            st.write("최종 누적 수익률 지수 (시작점 100 기준):")
-            st.dataframe(combined_price.iloc[-1].sort_values(ascending=False))
 
 # ==========================================
-# 메인 메뉴 관리
+# 메인 제어부
 # ==========================================
 
 def main():
@@ -192,18 +187,10 @@ def main():
     
     if menu == "홈":
         st.title("US Stock Analysis System")
-        st.markdown("""
-        업로드하신 코드를 기반으로 한 통합 대시보드입니다.
-        - **개별 종목 밸류에이션**: 단일 종목의 적정주가와 PER 밴드를 정밀 분석합니다.
-        - **종목 비교 분석**: 여러 종목의 EPS 성장과 PER 추세를 예측치를 포함하여 상대 비교합니다.
-        - **섹터/지수 수익률**: 주요 ETF와 지수의 주가 성과를 독립적으로 분석합니다.
-        """)
-    elif menu == "개별 종목 밸류에이션":
-        run_single_valuation()
-    elif menu == "종목 비교 분석 (EPS/PER)":
-        run_comparison()
-    elif menu == "섹터/지수 수익률":
-        run_sector_perf()
+        st.info("왼쪽 메뉴에서 분석 도구를 선택하세요. 모든 데이터는 2017년 이후를 기준으로 정규화됩니다.")
+    elif menu == "개별 종목 밸류에이션": run_single_valuation()
+    elif menu == "종목 비교 분석 (EPS/PER)": run_comparison()
+    elif menu == "섹터/지수 수익률": run_sector_perf()
 
 if __name__ == "__main__":
     main()
