@@ -13,9 +13,12 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="미국주식 통합 분석 시스템", layout="wide")
 plt.style.use('seaborn-v0_8-whitegrid')
 
-# 모든 숫자를 소수점 두 자리로 포맷팅하는 유틸리티
-def format_num(val):
-    return round(float(val), 2)
+# 공통 유틸리티: 소수점 2자리 반올림
+def format_val(val):
+    try:
+        return round(float(val), 2)
+    except:
+        return val
 
 # ==========================================
 # [Shared] 데이터 수집 및 동기화 함수
@@ -82,7 +85,8 @@ def run_single_valuation():
             plot_df = per_s[per_s.index >= f"{base_year}-01-01"]
             fig, ax = plt.subplots(figsize=(12, 5))
             ax.plot(plot_df.index, plot_df, marker='o', label=f"{ticker} PER")
-            ax.axhline(plot_df.mean(), color='red', ls='--', label=f'Mean: {format_num(plot_df.mean())}')
+            mean_val = plot_df.mean()
+            ax.axhline(mean_val, color='red', ls='--', label=f'Mean: {mean_val:.2f}')
             ax.legend(); st.pyplot(fig)
 
 # ==========================================
@@ -118,16 +122,20 @@ def run_comparison():
                 series = indexed_df[ticker].dropna()
                 valid_indices = [indexed_df.index.get_loc(dt) for dt in series.index]
                 forecast_count = (1 if q1 else 0) + (1 if q2 else 0)
+                
+                # 범례 숫자 소수점 2자리 적용
+                label_val = f"{ticker} ({series.iloc[-1]:.2f})"
+                
                 if forecast_count > 0:
-                    ax.plot(valid_indices[:-forecast_count], series.values[:-forecast_count], marker='o', label=f"{ticker} ({format_num(series.iloc[-1])})")
+                    ax.plot(valid_indices[:-forecast_count], series.values[:-forecast_count], marker='o', label=label_val)
                     ax.plot(valid_indices[-forecast_count-1:], series.values[-forecast_count-1:], ls='--', marker='x', alpha=0.7)
                 else:
-                    ax.plot(valid_indices, series.values, marker='o', label=f"{ticker} ({format_num(series.iloc[-1])})")
+                    ax.plot(valid_indices, series.values, marker='o', label=label_val)
             ax.set_xticks(range(len(indexed_df))); ax.set_xticklabels(x_labels, rotation=45)
             ax.axhline(100, color='black', alpha=0.5); ax.legend(); st.pyplot(fig)
 
 # ==========================================
-# [Module 3] 섹터 수익률 (% 변환 및 소수점 2자리 적용)
+# [Module 3] 섹터 수익률 (포맷팅 강화)
 # ==========================================
 
 def run_sector_perf():
@@ -159,16 +167,15 @@ def run_sector_perf():
                 st.error("해당 시점 이후의 데이터가 없습니다."); return
             
             base_date = available_dates[0]
-            # 정규화 (지수형태: 100 기준)
             norm_df = (combined_price.loc[base_date:] / combined_price.loc[base_date]) * 100
             
-            # 그래프 출력
             fig, ax = plt.subplots(figsize=(15, 8))
             last_val_idx = norm_df.iloc[-1].sort_values(ascending=False)
+            
             for ticker in last_val_idx.index:
                 lw = 4 if ticker in ["SPY", "QQQ"] else 2
                 zo = 5 if ticker in ["SPY", "QQQ"] else 2
-                ax.plot(norm_df.index, norm_df[ticker], label=f"{ticker} ({format_num(last_val_idx[ticker])})", linewidth=lw, zorder=zo)
+                ax.plot(norm_df.index, norm_df[ticker], label=f"{ticker} ({last_val_idx[ticker]:.2f})", linewidth=lw, zorder=zo)
             
             q_ticks = [d for d in norm_df.index if d.endswith(('-01-01', '-04-01', '-07-01', '-10-01'))]
             ax.set_xticks(q_ticks if q_ticks else norm_df.index[::3])
@@ -178,14 +185,14 @@ def run_sector_perf():
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             st.pyplot(fig)
             
-            # --- [수정 부분] 표 내용 변경: 지수 -> 순수 수익률(%) ---
+            # 테이블 출력 부분 (소수점 2자리 강제 문자열 포맷팅)
             st.write(f"### 🏆 {base_date} 이후 누적 수익률 (%)")
-            # 100을 빼서 수익률로 변환하고 소수점 2자리 제한
-            performance_pct = (last_val_idx - 100).apply(format_num)
+            performance_pct = (last_val_idx - 100).to_frame(name="수익률 (%)")
             
-            # 표 가독성을 위해 데이터프레임으로 변환
-            perf_df = pd.DataFrame(performance_pct).rename(columns={0: "수익률 (%)"})
-            st.table(perf_df)
+            # map을 사용하여 소수점 둘째 자리 문자열로 변환 (st.table 자동 포맷팅 방지)
+            performance_pct["수익률 (%)"] = performance_pct["수익률 (%)"].map('{:.2f}'.format)
+            
+            st.table(performance_pct)
 
 # ==========================================
 # 메인 메뉴
@@ -196,7 +203,7 @@ def main():
     menu = st.sidebar.selectbox("메뉴 선택", ["홈", "개별 종목 밸류에이션", "종목 비교 분석 (Sync)", "섹터/지수 수익률"])
     if menu == "홈":
         st.title("US Stock Analysis System")
-        st.info("모든 수치는 소수점 두 자리까지 표시되며, 수익률은 % 단위로 계산됩니다.")
+        st.info("모든 수치는 소수점 둘째 자리까지 표시됩니다.")
     elif menu == "개별 종목 밸류에이션": run_single_valuation()
     elif menu == "종목 비교 분석 (Sync)": run_comparison()
     elif menu == "섹터/지수 수익률": run_sector_perf()
