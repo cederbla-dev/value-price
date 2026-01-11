@@ -13,12 +13,14 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Professional Stock Analyzer", layout="wide")
 
 # --- [공통 스타일 함수] ---
-def apply_strong_style(ax, title, ylabel):
+def apply_strong_style(ax, title, xlabel, ylabel):
     ax.set_facecolor('white')
     ax.set_title(title, fontsize=13, fontweight='bold', pad=15)
-    ax.set_ylabel(ylabel, fontsize=10, fontweight='bold')
+    ax.set_xlabel(xlabel, fontsize=10, fontweight='bold', labelpad=10)
+    ax.set_ylabel(ylabel, fontsize=10, fontweight='bold', labelpad=10)
     ax.grid(True, linestyle='--', alpha=0.6)
     plt.xticks(rotation=45, fontsize=9)
+    plt.yticks(fontsize=9)
 
 # --- [사이드바 메뉴] ---
 with st.sidebar:
@@ -126,12 +128,16 @@ elif main_menu == "개별종목 적정주가 분석 3":
                 avg_per = per_series.mean()
                 median_per = per_series.median()
 
-                # 5. 시각화 (크기를 70%로 축소: figsize 15x7 -> 10.5x4.9)
+                # 5. 시각화
                 fig, ax = plt.subplots(figsize=(10.5, 4.9), facecolor='white')
                 
-                # 메인 추이선 (진한 유채색: Royal Blue)
+                # 메인 추이선
                 ax.plot(plot_df['Label'], plot_df['PER'], marker='o', linestyle='-', color='#0047AB', 
-                        linewidth=2.5, markersize=7, label='Forward PER Trend')
+                        linewidth=2.5, markersize=7, label='PER Trend (Forward)')
+
+                # 평균선 및 중위값선
+                ax.axhline(avg_per, color='#D32F2F', linestyle='--', linewidth=1.5, label=f'Mean PER: {avg_per:.2f}')
+                ax.axhline(median_per, color='#7B1FA2', linestyle='-.', linewidth=1.5, label=f'Median PER: {median_per:.2f}')
 
                 # 예측 구간 하이라이트
                 for i, label in enumerate(plot_df['Label']):
@@ -140,13 +146,10 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         ax.text(i, plot_df['PER'].iloc[i] + 0.3, f"{plot_df['PER'].iloc[i]:.2f}", 
                                 ha='center', fontweight='bold', color='#E67E22', fontsize=9)
 
-                # 평균선 및 중위값선
-                ax.axhline(avg_per, color='#D32F2F', linestyle='--', linewidth=1.5, label=f'Average: {avg_per:.2f}')
-                ax.axhline(median_per, color='#7B1FA2', linestyle='-.', linewidth=1.5, label=f'Median: {median_per:.2f}')
-
-                apply_strong_style(ax, f"[{v3_ticker}] PER Analysis: Mean vs Median", "PER (Price / TTM EPS)")
+                # 스타일 적용 (축 라벨 및 단위 추가)
+                apply_strong_style(ax, f"[{v3_ticker}] PER Historical Analysis", "Quarter (Time)", "PER Value (Price / TTM EPS)")
                 
-                # 범례 상자 색상 흰색으로 변경
+                # 범례 설정 (설명 보완 및 배경색 흰색)
                 ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#d3d3d3', framealpha=1, shadow=True, fontsize=9)
                 
                 st.pyplot(fig)
