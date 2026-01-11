@@ -13,7 +13,7 @@ import matplotlib.ticker as mtick
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Stock Analysis Dashboard", layout="wide")
 
-# --- 데이터 처리 함수 (기본 로직 유지) ---
+# --- 데이터 처리 함수 ---
 
 def normalize_to_standard_quarter(dt):
     month = dt.month
@@ -42,6 +42,8 @@ def fetch_multicycle_ticker_per(ticker, show_q1, show_q2):
         combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
         combined = combined.sort_index()
         historical_eps = combined['EPS'].tolist()
+        
+        # PER 예측 제어
         if show_q1:
             stock = yf.Ticker(ticker)
             history = stock.history(period="1d")
@@ -56,13 +58,14 @@ def fetch_multicycle_ticker_per(ticker, show_q1, show_q2):
                     q2_dt = q1_dt + pd.DateOffset(months=3)
                     ttm_eps_q2 = sum(historical_eps[-2:]) + est.loc['0q', 'avg'] + est.loc['+1q', 'avg']
                     combined.loc[q2_dt, 'PER'] = current_price / ttm_eps_q2
+        
         combined.index = combined.index.map(normalize_to_standard_quarter)
         combined = combined[~combined.index.duplicated(keep='last')].sort_index()
         return combined['PER']
     except: return None
 
 @st.cache_data(ttl=3600)
-def fetch_ticker_eps_integrated(ticker):
+def fetch_ticker_eps_integrated(ticker, show_q1, show_q2):
     url = f"https://www.choicestock.co.kr/search/invest/{ticker}/MRQ"
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
@@ -75,38 +78,52 @@ def fetch_ticker_eps_integrated(ticker):
         eps_df.columns = [ticker]
         eps_df.index = pd.to_datetime(eps_df.index, format='%y.%m.%d', errors='coerce')
         eps_df = eps_df.dropna()
+        
         def to_q_label(dt):
             actual_dt = (dt.replace(day=1) - timedelta(days=1)) if dt.day <= 5 else dt
             return f"{actual_dt.year}-Q{(actual_dt.month-1)//3 + 1}"
+        
         eps_df.index = [to_q_label(d) for d in eps_df.index]
         eps_df[ticker] = pd.to_numeric(eps_df[ticker].astype(str).str.replace(',', ''), errors='coerce')
         eps_df = eps_df.groupby(level=0).last()
         eps_df['type'] = 'Actual'
-        stock = yf.Ticker(ticker)
-        est = stock.earnings_estimate
-        if est is not None and not est.empty:
-            last_q = eps_df.index[-1]
-            year, q = int(last_q.split('-Q')[0]), int(last_q.split('-Q')[1])
-            for i, key in enumerate(['0q', '+1q']):
-                if i < len(est):
-                    val = est.loc[key, 'avg']
-                    new_q = q + (i + 1)
-                    q_label = f"{year + (new_q-1)//4}-Q{(new_q-1)%4 + 1}"
-                    eps_df.loc[q_label, ticker], eps_df.loc[q_label, 'type'] = val, 'Estimate'
+
+        # EPS 예측 제어 (사이드바 버튼 연동)
+        if show_q1:
+            stock = yf.Ticker(ticker)
+            est = stock.earnings_estimate
+            if est is not None and not est.empty:
+                last_q = eps_df.index[-1]
+                year, q = int(last_q.split('-Q')[0]), int(last_q.split('-Q')[1])
+                
+                # Q1 예측 추가
+                val_q1 = est.loc['0q', 'avg']
+                new_q1 = q + 1
+                q_label_q1 = f"{year + (new_q1-1)//4}-Q{(new_q1-1)%4 + 1}"
+                eps_df.loc[q_label_q1, ticker], eps_df.loc[q_label_q1, 'type'] = val_q1, 'Estimate'
+                
+                # Q2 예측 추가 (버튼이 활성화된 경우에만)
+                if show_q2:
+                    val_q2 = est.loc['+1q', 'avg']
+                    new_q2 = q + 2
+                    q_label_q2 = f"{year + (new_q2-1)//4}-Q{(new_q2-1)%4 + 1}"
+                    eps_df.loc[q_label_q2, ticker], eps_df.loc[q_label_q2, 'type'] = val_q2, 'Estimate'
+        
         return eps_df
     except: return pd.DataFrame()
 
 # --- UI 레이아웃 ---
 
-st.title("🚀 고시안성 주식 분석 대시보드")
+st.title("🚀 주식 분석 대시보드 (통합 예측 시스템)")
 
 with st.sidebar:
-    st.header("⚙️ 설정")
-    ticker_input = st.text_input("티커 입력", "AAPL, MSFT, NVDA, TSLA")
+    st.header("⚙️ 분석 설정")
+    ticker_input = st.text_input("티커 입력 (쉼표 구분)", "AAPL, MSFT, NVDA, TSLA")
     start_year = st.number_input("기준 연도", 2010, 2025, 2020)
     st.markdown("---")
-    ans1 = st.checkbox("PER 현재분기 예측 포함", True)
-    ans2 = st.checkbox("PER 다음분기 예측 포함", False)
+    # 버튼 이름에서 'PER' 제거 및 공용화
+    ans1 = st.checkbox("현재 분기 예측 포함", True)
+    ans2 = st.checkbox("다음 분기 예측 포함", False)
     analyze_btn = st.button("데이터 분석 시작", type="primary")
 
 if analyze_btn:
@@ -118,12 +135,11 @@ if analyze_btn:
         ax.set_title(title, fontsize=16, fontweight='bold', pad=20, color='black')
         ax.set_ylabel(ylabel, fontsize=12, fontweight='bold', color='black')
         ax.grid(True, linestyle='--', alpha=0.5, color='#d3d3d3')
-        # 축 및 숫자 가시성 강화
         ax.spines['bottom'].set_color('black')
         ax.spines['bottom'].set_linewidth(1.5)
         ax.spines['left'].set_color('black')
         ax.spines['left'].set_linewidth(1.5)
-        ax.tick_params(axis='both', colors='black', labelsize=10) # X, Y축 숫자 색상 및 크기 설정
+        ax.tick_params(axis='both', colors='black', labelsize=10)
         ax.axhline(0, color='black', linewidth=1.5, zorder=2)
         ax.yaxis.set_major_formatter(mtick.PercentFormatter())
 
@@ -144,6 +160,7 @@ if analyze_btn:
             x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
             for i, ticker in enumerate(indexed_per.columns):
                 series = indexed_per[ticker].dropna()
+                # 예측 포인트 개수 계산
                 f_count = (1 if ans1 else 0) + (1 if ans2 else 0)
                 v_idx = [indexed_per.index.get_loc(dt) for dt in series.index]
                 final_val = series.values[-1]
@@ -158,7 +175,7 @@ if analyze_btn:
 
             apply_strong_style(ax, f"PER Relative Change (%) since {start_year}", "Change (%)")
             ax.set_xticks(range(len(indexed_per)))
-            ax.set_xticklabels(x_labels, rotation=45, color='black') # X축 라벨 강제 노출
+            ax.set_xticklabels(x_labels, rotation=45, color='black')
             ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black', labelcolor='black', fontsize=10)
             st.pyplot(fig)
 
@@ -166,7 +183,8 @@ if analyze_btn:
     with tab2:
         all_eps = []
         for t in tickers:
-            df = fetch_ticker_eps_integrated(t)
+            # EPS 함수에 ans1, ans2 인자 전달하여 연동
+            df = fetch_ticker_eps_integrated(t, ans1, ans2)
             if not df.empty: all_eps.append(df)
         
         if all_eps:
@@ -183,12 +201,15 @@ if analyze_btn:
                 plot_df = df.reindex(c_idx)
                 norm_vals = (plot_df[t] / base_val - 1) * 100
                 act_m, est_m = plot_df['type'] == 'Actual', plot_df['type'] == 'Estimate'
+                
+                # 예측 포인트가 있는지 확인
                 final_val = norm_vals.dropna().values[-1]
                 color = plt.cm.Set1(i % 9)
                 
                 if act_m.any():
                     x_act = [c_idx.index(idx) for idx in plot_df[act_m].index]
                     ax.plot(x_act, norm_vals[act_m], marker='o', label=f"{t} ({final_val:+.1f}%)", linewidth=2.5, color=color, markersize=6)
+                    # 사이드바 버튼 상태에 따른 점선 표시 제어
                     if est_m.any():
                         last_act = plot_df[act_m].index[-1]
                         e_indices = [last_act] + list(plot_df[est_m].index)
@@ -197,6 +218,6 @@ if analyze_btn:
 
             apply_strong_style(ax, f"EPS Growth (%) since {start_year}-Q1", "Growth (%)")
             ax.set_xticks(range(len(c_idx)))
-            ax.set_xticklabels(c_idx, rotation=45, color='black') # X축 라벨 강제 노출
+            ax.set_xticklabels(c_idx, rotation=45, color='black')
             ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black', labelcolor='black', fontsize=10)
             st.pyplot(fig)
