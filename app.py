@@ -7,15 +7,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warnings
 from datetime import timedelta
+import matplotlib.ticker as mtick
 
-# 기본 설정 및 경고 무시
+# 기본 설정
 warnings.filterwarnings("ignore")
-st.set_page_config(page_title="Stock Valuation & Growth Analyzer", layout="wide")
+st.set_page_config(page_title="Stock Analysis Dashboard", layout="wide")
 
-# --- 공통 함수 및 PER 관련 함수 ---
+# --- 데이터 처리 함수 (기존 로직 유지) ---
 
 def normalize_to_standard_quarter(dt):
-    """서로 다른 분기 마감일을 가장 가까운 표준 분기(3, 6, 9, 12월)로 조정"""
     month = dt.month
     year = dt.year
     if month in [1, 2, 3]:   new_month, new_year = 3, year
@@ -31,27 +31,17 @@ def fetch_multicycle_ticker_per(ticker, show_q1, show_q2):
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
         dfs = pd.read_html(io.StringIO(response.text))
-        
-        target_df = None
-        for df in dfs:
-            if df.iloc[:, 0].astype(str).str.contains('PER').any():
-                target_df = df.set_index(df.columns[0])
-                break
-        
+        target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER').any()), None)
         if target_df is None: return None
-
         per_raw = target_df[target_df.index.str.contains('PER')].transpose()
         eps_raw = target_df[target_df.index.str.contains('EPS')].transpose()
-        
         combined = pd.DataFrame({
             'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
             'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
         }).dropna()
-
         combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
         combined = combined.sort_index()
         historical_eps = combined['EPS'].tolist()
-        
         if show_q1:
             stock = yf.Ticker(ticker)
             history = stock.history(period="1d")
@@ -66,29 +56,13 @@ def fetch_multicycle_ticker_per(ticker, show_q1, show_q2):
                     q2_dt = q1_dt + pd.DateOffset(months=3)
                     ttm_eps_q2 = sum(historical_eps[-2:]) + est.loc['0q', 'avg'] + est.loc['+1q', 'avg']
                     combined.loc[q2_dt, 'PER'] = current_price / ttm_eps_q2
-
         combined.index = combined.index.map(normalize_to_standard_quarter)
         combined = combined[~combined.index.duplicated(keep='last')].sort_index()
         return combined['PER']
-    except:
-        return None
-
-# --- EPS 성장률 관련 함수 ---
-
-def get_future_estimates_yf(ticker):
-    try:
-        stock = yf.Ticker(ticker)
-        est = stock.earnings_estimate
-        if est is not None and not est.empty:
-            curr_est = est['avg'].iloc[0]
-            next_est = est['avg'].iloc[1] if len(est) > 1 else None
-            return {'current': curr_est, 'next': next_est}
-    except:
-        pass
-    return None
+    except: return None
 
 @st.cache_data(ttl=3600)
-def _get_ticker_data_integrated(ticker):
+def fetch_ticker_eps_integrated(ticker):
     url = f"https://www.choicestock.co.kr/search/invest/{ticker}/MRQ"
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
@@ -96,160 +70,136 @@ def _get_ticker_data_integrated(ticker):
         dfs = pd.read_html(io.StringIO(response.text), flavor='lxml')
         target_df = next((df for df in dfs if df.iloc[:, 0].astype(str).str.contains('EPS').any()), None)
         if target_df is None: return pd.DataFrame()
-        
         target_df = target_df.set_index(target_df.columns[0]).transpose()
         eps_df = target_df.iloc[:, [0]].copy()
         eps_df.columns = [ticker]
         eps_df.index = pd.to_datetime(eps_df.index, format='%y.%m.%d', errors='coerce')
         eps_df = eps_df.dropna()
-        
-        def to_quarter_label(dt):
+        def to_q_label(dt):
             actual_dt = (dt.replace(day=1) - timedelta(days=1)) if dt.day <= 5 else dt
             return f"{actual_dt.year}-Q{(actual_dt.month-1)//3 + 1}"
-
-        eps_df.index = [to_quarter_label(d) for d in eps_df.index]
+        eps_df.index = [to_q_label(d) for d in eps_df.index]
         eps_df[ticker] = pd.to_numeric(eps_df[ticker].astype(str).str.replace(',', ''), errors='coerce')
         eps_df = eps_df.groupby(level=0).last()
         eps_df['type'] = 'Actual'
-
-        estimates = get_future_estimates_yf(ticker)
-        if estimates:
+        stock = yf.Ticker(ticker)
+        est = stock.earnings_estimate
+        if est is not None and not est.empty:
             last_q = eps_df.index[-1]
             year, q = int(last_q.split('-Q')[0]), int(last_q.split('-Q')[1])
-            for i, key in enumerate(['current', 'next'], 1):
-                val = estimates[key]
-                if val is not None:
-                    new_q = q + i
-                    new_year = year + (new_q - 1) // 4
-                    actual_q = (new_q - 1) % 4 + 1
-                    q_label = f"{new_year}-Q{actual_q}"
-                    eps_df.loc[q_label, ticker] = val
-                    eps_df.loc[q_label, 'type'] = 'Estimate'
+            for i, key in enumerate(['0q', '+1q']):
+                if i < len(est):
+                    val = est.loc[key, 'avg']
+                    new_q = q + (i + 1)
+                    q_label = f"{year + (new_q-1)//4}-Q{(new_q-1)%4 + 1}"
+                    eps_df.loc[q_label, ticker], eps_df.loc[q_label, 'type'] = val, 'Estimate'
         return eps_df
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# --- 메인 UI 레이아웃 ---
+# --- UI 레이아웃 ---
 
-st.title("📈 주식 가치 및 성장 통합 분석기")
+st.title("🚀 고시안성 주식 밸류에이션/성장 분석기")
 
 with st.sidebar:
-    st.header("🔍 설정 패널")
-    ticker_input = st.text_input("분석 티커 입력 (예: AAPL, MSFT, TSLA)", "AAPL, MSFT, NVDA")
-    start_year = st.number_input("기준 시작 연도", min_value=2010, max_value=2025, value=2020)
-    
+    st.header("⚙️ 설정")
+    ticker_input = st.text_input("티커 입력", "AAPL, MSFT, NVDA, TSLA")
+    start_year = st.number_input("기준 연도", 2010, 2025, 2020)
     st.markdown("---")
-    st.subheader("PER 설정")
-    show_q1 = st.checkbox("PER 현재 분기 예측 포함", value=True)
-    show_q2 = st.checkbox("PER 다음 분기 예측 포함", value=False)
-    
-    analyze_btn = st.button("분석 실행", type="primary")
+    ans1 = st.checkbox("PER 현재분기 예측 포함", True)
+    ans2 = st.checkbox("PER 다음분기 예측 포함", False)
+    analyze_btn = st.button("데이터 분석 시작", type="primary")
 
 if analyze_btn:
-    tickers = list(dict.fromkeys([t.strip().upper() for t in ticker_input.replace(',', ' ').split() if t.strip()]))
-    
-    tab1, tab2 = st.tabs(["📊 Relative PER Trend", "📈 EPS Growth Trend"])
+    tickers = [t.strip().upper() for t in ticker_input.replace(',', ' ').split() if t.strip()]
+    tab1, tab2 = st.tabs(["📊 PER 증감률 (%)", "📈 EPS 성장률 (%)"])
 
-    # --- Tab 1: PER 분석 ---
+    # 공통 그래프 스타일 설정 함수
+    def apply_strong_style(ax, title, ylabel):
+        ax.set_facecolor('white')
+        ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+        ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
+        ax.grid(True, linestyle='--', alpha=0.7, color='#d3d3d3')
+        # 축 선 강화
+        ax.spines['bottom'].set_color('black')
+        ax.spines['bottom'].set_linewidth(1.5)
+        ax.spines['left'].set_color('black')
+        ax.spines['left'].set_linewidth(1.5)
+        ax.axhline(0, color='black', linewidth=2, zorder=2) # 0% 기준선
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter()) # % 단위 표시
+
+    # --- Tab 1: PER (%) ---
     with tab1:
-        st.subheader("표준 분기 동기화 상대 PER 추이")
         master_per = pd.DataFrame()
-        progress_per = st.progress(0)
-        
-        for idx, ticker in enumerate(tickers):
-            series = fetch_multicycle_ticker_per(ticker, show_q1, show_q2)
-            if series is not None:
-                master_per[ticker] = series
-            progress_per.progress((idx + 1) / len(tickers))
+        for t in tickers:
+            s = fetch_multicycle_ticker_per(t, ans1, ans2)
+            if s is not None: master_per[t] = s
         
         if not master_per.empty:
             master_per = master_per[master_per.index >= f"{start_year}-01-01"].sort_index()
-            if not master_per.empty and not master_per.iloc[0].isnull().any():
-                indexed_per = (master_per / master_per.iloc[0]) * 100
-                
-                fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
-                ax.set_facecolor('white')
-                
-                x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
-                x_indices = np.arange(len(indexed_per))
-
-                for ticker in indexed_per.columns:
-                    series = indexed_per[ticker].dropna()
-                    forecast_count = (1 if show_q1 else 0) + (1 if show_q2 else 0)
-                    valid_indices = [indexed_per.index.get_loc(dt) for dt in series.index]
-                    
-                    if len(valid_indices) > forecast_count:
-                        hist_idx = valid_indices[:-forecast_count] if forecast_count > 0 else valid_indices
-                        hist_val = series.values[:-forecast_count] if forecast_count > 0 else series.values
-                        line, = ax.plot(hist_idx, hist_val, marker='o', label=f"{ticker}", linewidth=2)
-                        
-                        if forecast_count > 0:
-                            pred_idx = valid_indices[-forecast_count-1:]
-                            pred_val = series.values[-forecast_count-1:]
-                            ax.plot(pred_idx, pred_val, linestyle='--', color=line.get_color(), alpha=0.6)
-                            ax.scatter(valid_indices[-forecast_count:], series.values[-forecast_count:], marker='D', s=50, color=line.get_color())
-
-                ax.axhline(100, color='black', alpha=0.3, linestyle='--')
-                ax.set_title(f"Relative PER Trend (Base: {start_year})", fontsize=14)
-                ax.set_xticks(x_indices)
-                ax.set_xticklabels(x_labels, rotation=45)
-                ax.legend(loc='upper left', frameon=True)
-                ax.grid(True, axis='y', alpha=0.3)
-                st.pyplot(fig)
-            else:
-                st.warning("PER 데이터를 인덱스화할 수 없습니다 (시작 시점 데이터 부족).")
-
-    # --- Tab 2: EPS 성장률 분석 ---
-    with tab2:
-        st.subheader("EPS 과거 실적 및 향후 성장률 비교")
-        all_eps_data = []
-        progress_eps = st.progress(0)
-        
-        for idx, ticker in enumerate(tickers):
-            df = _get_ticker_data_integrated(ticker)
-            if not df.empty:
-                all_eps_data.append(df)
-            progress_eps.progress((idx + 1) / len(tickers))
-
-        if all_eps_data:
-            combined_index = sorted(list(set().union(*(d.index for d in all_eps_data))))
-            combined_index = [i for i in combined_index if i >= f"{start_year}-Q1"]
+            # 기준점 대비 % 변환: (현재값 / 기준값 - 1) * 100
+            indexed_per = (master_per / master_per.iloc[0] - 1) * 100
             
             fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
-            ax.set_facecolor('white')
+            colors = plt.cm.tab10(np.linspace(0, 1, len(tickers))) # 강한 색감 테마
             
-            for df in all_eps_data:
-                ticker = [c for c in df.columns if c != 'type'][0]
+            x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
+            for i, ticker in enumerate(indexed_per.columns):
+                series = indexed_per[ticker].dropna()
+                f_count = (1 if ans1 else 0) + (1 if ans2 else 0)
+                v_idx = [indexed_per.index.get_loc(dt) for dt in series.index]
+                
+                # 실선 (과거)
+                h_idx = v_idx[:-f_count] if f_count > 0 else v_idx
+                ax.plot(h_idx, series.values[:-f_count] if f_count > 0 else series.values, 
+                        marker='o', label=ticker, linewidth=2.5, color=colors[i], markersize=8)
+                # 점선 (예측)
+                if f_count > 0:
+                    p_idx = v_idx[-f_count-1:]
+                    ax.plot(p_idx, series.values[-f_count-1:], linestyle='--', color=colors[i], linewidth=2, alpha=0.8)
+                    ax.scatter(v_idx[-f_count:], series.values[-f_count:], marker='D', s=80, color=colors[i], edgecolors='white', zorder=5)
+
+            apply_strong_style(ax, f"PER Relative Change (%) since {start_year}", "Change (%)")
+            ax.set_xticks(range(len(indexed_per)))
+            ax.set_xticklabels(x_labels, rotation=45)
+            ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
+            st.pyplot(fig)
+
+    # --- Tab 2: EPS (%) ---
+    with tab2:
+        all_eps = []
+        for t in tickers:
+            df = fetch_ticker_eps_integrated(t)
+            if not df.empty: all_eps.append(df)
+        
+        if all_eps:
+            c_idx = sorted(list(set().union(*(d.index for d in all_eps))))
+            c_idx = [i for i in c_idx if i >= f"{start_year}-Q1"]
+            
+            fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
+            for i, df in enumerate(all_eps):
+                t = [c for c in df.columns if c != 'type'][0]
                 base_data = df[df.index >= f"{start_year}-Q1"]
                 if base_data.empty: continue
-                base_val = base_data[ticker].dropna().iloc[0]
+                base_val = base_data[t].dropna().iloc[0]
                 
-                plot_df = df.reindex(combined_index)
-                norm_values = plot_df[ticker] / base_val
+                plot_df = df.reindex(c_idx)
+                # % 변환: (값 / 기준값 - 1) * 100
+                norm_vals = (plot_df[t] / base_val - 1) * 100
                 
-                actual_mask = plot_df['type'] == 'Actual'
-                est_mask = plot_df['type'] == 'Estimate'
+                act_m, est_m = plot_df['type'] == 'Actual', plot_df['type'] == 'Estimate'
+                color = plt.cm.Set1(i % 9)
                 
-                if actual_mask.any():
-                    x_actual = [combined_index.index(i) for i in plot_df[actual_mask].index]
-                    line = ax.plot(x_actual, norm_values[actual_mask], marker='o', label=f"{ticker}", linewidth=2)
-                    color = line[0].get_color()
-                    
-                    if est_mask.any():
-                        last_actual_idx = plot_df[actual_mask].index[-1]
-                        est_indices = [last_actual_idx] + list(plot_df[est_mask].index)
-                        x_est = [combined_index.index(i) for i in est_indices]
-                        ax.plot(x_est, norm_values[est_indices], marker='x', linestyle='--', color=color, alpha=0.7)
+                if act_m.any():
+                    x_act = [c_idx.index(idx) for idx in plot_df[act_m].index]
+                    ax.plot(x_act, norm_vals[act_m], marker='o', label=t, linewidth=2.5, color=color, markersize=8)
+                    if est_m.any():
+                        last_act = plot_df[act_m].index[-1]
+                        e_indices = [last_act] + list(plot_df[est_m].index)
+                        x_est = [c_idx.index(idx) for idx in e_indices]
+                        ax.plot(x_est, norm_vals[e_indices], marker='x', linestyle='--', color=color, linewidth=2)
 
-            ax.set_title(f"Normalized EPS Growth (Base: {start_year}-Q1)", fontsize=14)
-            ax.set_xticks(range(len(combined_index)))
-            ax.set_xticklabels(combined_index, rotation=45)
-            ax.set_ylabel("Growth Factor")
-            ax.legend(loc='upper left')
-            ax.grid(True, alpha=0.3)
+            apply_strong_style(ax, f"EPS Growth (%) since {start_year}-Q1", "Growth (%)")
+            ax.set_xticks(range(len(c_idx)))
+            ax.set_xticklabels(c_idx, rotation=45)
+            ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
             st.pyplot(fig)
-        else:
-            st.error("수집된 EPS 데이터가 없습니다.")
-
-else:
-    st.info("사이드바에서 티커를 입력하고 '분석 실행' 버튼을 눌러주세요.")
