@@ -1,3 +1,4 @@
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -132,7 +133,7 @@ def fetch_etf_data(selected_tickers):
 
 # --- [UI 레이아웃] ---
 
-# 1. 사이드바 메뉴 (단순 메뉴 선택기)
+# 1. 사이드바 메뉴 (메뉴 선택)
 with st.sidebar:
     st.title("📂 분석 메뉴")
     main_menu = st.radio(
@@ -140,11 +141,10 @@ with st.sidebar:
         ("기업 개별 지표 분석 (PER/EPS)", "ETF 섹터 수익률 분석")
     )
 
-# 2. 메인 화면 설정창 (오른쪽 화면으로 이동)
+# 2. 메인 화면 상단 설정 섹션
 st.title(f"🚀 {main_menu}")
 
 if main_menu == "기업 개별 지표 분석 (PER/EPS)":
-    # --- 메인 화면 상단 설정 섹션 ---
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
@@ -152,7 +152,6 @@ if main_menu == "기업 개별 지표 분석 (PER/EPS)":
         with col2:
             start_year = st.number_input("📅 기준 연도", 2010, 2025, 2020)
         with col3:
-            # 틱 방식에서 라디오 버튼 방식으로 변경
             predict_mode = st.radio(
                 "🔮 미래 예측 옵션",
                 ("None", "현재 분기 예측", "다음 분기 예측"),
@@ -175,16 +174,26 @@ if main_menu == "기업 개별 지표 분석 (PER/EPS)":
                 fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
                 colors = plt.cm.tab10(np.linspace(0, 1, len(tickers)))
                 x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
+                
                 for i, ticker in enumerate(indexed_per.columns):
                     series = indexed_per[ticker].dropna()
                     f_count = 1 if predict_mode == "현재 분기 예측" else (2 if predict_mode == "다음 분기 예측" else 0)
                     h_end = len(series) - f_count
-                    ax.plot(range(h_end), series.values[:h_end], marker='o', label=f"{ticker} ({series.values[-1]:+.1f}%)", color=colors[i], linewidth=2.5)
+                    final_val = series.values[-1] # 최종 증감률 값
+                    
+                    # 실선(과거 데이터)
+                    ax.plot(range(h_end), series.values[:h_end], marker='o', 
+                            label=f"{ticker} ({final_val:+.1f}%)", color=colors[i], linewidth=2.5)
+                    # 점선(예측 데이터)
                     if f_count > 0:
-                        ax.plot(range(h_end-1, len(series)), series.values[h_end-1:], linestyle='--', color=colors[i], linewidth=2)
+                        ax.plot(range(h_end-1, len(series)), series.values[h_end-1:], 
+                                linestyle='--', color=colors[i], linewidth=2, alpha=0.7)
+                
                 apply_strong_style(ax, f"Relative PER Change (%) since {start_year}", "Change (%)")
-                ax.set_xticks(range(len(indexed_per))); ax.set_xticklabels(x_labels, rotation=45)
-                ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black')
+                ax.set_xticks(range(len(indexed_per)))
+                ax.set_xticklabels(x_labels, rotation=45)
+                # 범례 배경 흰색 유지 및 텍스트 포함
+                ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black', labelcolor='black')
                 st.pyplot(fig)
 
         with tab2:
@@ -203,15 +212,25 @@ if main_menu == "기업 개별 지표 분석 (PER/EPS)":
                     plot_df = df.reindex(c_idx)
                     norm_vals = (plot_df[t] / base_val - 1) * 100
                     color = plt.cm.Set1(i % 9)
+                    
                     act_m = plot_df['type'] == 'Actual'
                     x_act = [c_idx.index(idx) for idx in plot_df[act_m].index]
-                    ax.plot(x_act, norm_vals[act_m], marker='o', label=f"{t} ({norm_vals.dropna().values[-1]:+.1f}%)", color=color, linewidth=2.5)
+                    final_eps_val = norm_vals.dropna().values[-1] # 최종 성장률 값
+                    
+                    # 실선 표시
+                    ax.plot(x_act, norm_vals[act_m], marker='o', 
+                            label=f"{t} ({final_eps_val:+.1f}%)", color=color, linewidth=2.5)
+                    
+                    # 예측 점선 표시
                     if (plot_df['type'] == 'Estimate').any():
-                        est_idx = [c_idx.index(idx) for idx in plot_df[plot_df['type'] != 'Nan'].index] # 간소화된 연결
-                        ax.plot(range(len(c_idx)-f_count-1, len(c_idx)), norm_vals.values[-(f_count+1):], linestyle='--', color=color)
+                        f_count_eps = 1 if predict_mode == "현재 분기 예측" else (2 if predict_mode == "다음 분기 예측" else 0)
+                        ax.plot(range(len(c_idx)-f_count_eps-1, len(c_idx)), 
+                                norm_vals.values[-(f_count_eps+1):], linestyle='--', color=color, linewidth=2)
+                
                 apply_strong_style(ax, f"Normalized EPS Growth (%) since {start_year}-Q1", "Growth (%)")
-                ax.set_xticks(range(len(c_idx))); ax.set_xticklabels(c_idx, rotation=45)
-                ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black')
+                ax.set_xticks(range(len(c_idx)))
+                ax.set_xticklabels(c_idx, rotation=45)
+                ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black', labelcolor='black')
                 st.pyplot(fig)
 
 else: # ETF 섹터 수익률 분석 모드
@@ -230,8 +249,7 @@ else: # ETF 섹터 수익률 분석 모드
         if selected_etfs:
             df_etf = fetch_etf_data(selected_etfs)
             start_date = f"{start_year_etf}-{str((start_q_etf-1)*3 + 1).zfill(2)}"
-            if start_date in df_etf.index or any(df_etf.index >= start_date):
-                # 정확한 시작일 찾기
+            if any(df_etf.index >= start_date):
                 valid_start = df_etf.index[df_etf.index >= start_date][0]
                 filtered_etf = df_etf.loc[valid_start:]
                 norm_etf = (filtered_etf / filtered_etf.iloc[0] - 1) * 100
@@ -242,8 +260,11 @@ else: # ETF 섹터 수익률 분석 모드
                 for ticker in last_vals.index:
                     lw = 3.5 if ticker in ["SPY", "QQQ"] else 1.8
                     z = 5 if ticker in ["SPY", "QQQ"] else 2
-                    ax.plot(norm_etf.index, norm_etf[ticker], label=f"{ticker} ({last_vals[ticker]:+.1f}%)", linewidth=lw, zorder=z)
+                    ax.plot(norm_etf.index, norm_etf[ticker], 
+                            label=f"{ticker} ({last_vals[ticker]:+.1f}%)", linewidth=lw, zorder=z)
+                
                 apply_strong_style(ax, f"ETF Sector Performance (%) since {valid_start}", "Return (%)")
                 ax.set_xticks(quarter_ticks); ax.set_xticklabels(quarter_ticks, rotation=45)
-                ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=True, facecolor='white', edgecolor='black')
+                # 범례 가시성 강화
+                ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=True, facecolor='white', edgecolor='black', labelcolor='black')
                 st.pyplot(fig)
