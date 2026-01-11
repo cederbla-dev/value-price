@@ -13,7 +13,7 @@ import matplotlib.ticker as mtick
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Stock Analysis Dashboard", layout="wide")
 
-# --- 데이터 처리 함수 (기존 로직 유지) ---
+# --- 데이터 처리 함수 (기본 로직 유지) ---
 
 def normalize_to_standard_quarter(dt):
     month = dt.month
@@ -98,7 +98,7 @@ def fetch_ticker_eps_integrated(ticker):
 
 # --- UI 레이아웃 ---
 
-st.title("🚀 고시안성 주식 밸류에이션/성장 분석기")
+st.title("🚀 고시안성 주식 분석 대시보드")
 
 with st.sidebar:
     st.header("⚙️ 설정")
@@ -113,19 +113,19 @@ if analyze_btn:
     tickers = [t.strip().upper() for t in ticker_input.replace(',', ' ').split() if t.strip()]
     tab1, tab2 = st.tabs(["📊 PER 증감률 (%)", "📈 EPS 성장률 (%)"])
 
-    # 공통 그래프 스타일 설정 함수
     def apply_strong_style(ax, title, ylabel):
         ax.set_facecolor('white')
-        ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
-        ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
-        ax.grid(True, linestyle='--', alpha=0.7, color='#d3d3d3')
-        # 축 선 강화
+        ax.set_title(title, fontsize=16, fontweight='bold', pad=20, color='black')
+        ax.set_ylabel(ylabel, fontsize=12, fontweight='bold', color='black')
+        ax.grid(True, linestyle='--', alpha=0.5, color='#d3d3d3')
+        # 축 및 숫자 가시성 강화
         ax.spines['bottom'].set_color('black')
         ax.spines['bottom'].set_linewidth(1.5)
         ax.spines['left'].set_color('black')
         ax.spines['left'].set_linewidth(1.5)
-        ax.axhline(0, color='black', linewidth=2, zorder=2) # 0% 기준선
-        ax.yaxis.set_major_formatter(mtick.PercentFormatter()) # % 단위 표시
+        ax.tick_params(axis='both', colors='black', labelsize=10) # X, Y축 숫자 색상 및 크기 설정
+        ax.axhline(0, color='black', linewidth=1.5, zorder=2)
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter())
 
     # --- Tab 1: PER (%) ---
     with tab1:
@@ -136,32 +136,30 @@ if analyze_btn:
         
         if not master_per.empty:
             master_per = master_per[master_per.index >= f"{start_year}-01-01"].sort_index()
-            # 기준점 대비 % 변환: (현재값 / 기준값 - 1) * 100
             indexed_per = (master_per / master_per.iloc[0] - 1) * 100
             
             fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
-            colors = plt.cm.tab10(np.linspace(0, 1, len(tickers))) # 강한 색감 테마
+            colors = plt.cm.tab10(np.linspace(0, 1, len(tickers)))
             
             x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
             for i, ticker in enumerate(indexed_per.columns):
                 series = indexed_per[ticker].dropna()
                 f_count = (1 if ans1 else 0) + (1 if ans2 else 0)
                 v_idx = [indexed_per.index.get_loc(dt) for dt in series.index]
+                final_val = series.values[-1]
                 
-                # 실선 (과거)
                 h_idx = v_idx[:-f_count] if f_count > 0 else v_idx
                 ax.plot(h_idx, series.values[:-f_count] if f_count > 0 else series.values, 
-                        marker='o', label=ticker, linewidth=2.5, color=colors[i], markersize=8)
-                # 점선 (예측)
+                        marker='o', label=f"{ticker} ({final_val:+.1f}%)", linewidth=2.5, color=colors[i], markersize=6)
                 if f_count > 0:
                     p_idx = v_idx[-f_count-1:]
-                    ax.plot(p_idx, series.values[-f_count-1:], linestyle='--', color=colors[i], linewidth=2, alpha=0.8)
-                    ax.scatter(v_idx[-f_count:], series.values[-f_count:], marker='D', s=80, color=colors[i], edgecolors='white', zorder=5)
+                    ax.plot(p_idx, series.values[-f_count-1:], linestyle='--', color=colors[i], linewidth=2, alpha=0.7)
+                    ax.scatter(v_idx[-f_count:], series.values[-f_count:], marker='D', s=60, color=colors[i], edgecolors='white', zorder=5)
 
             apply_strong_style(ax, f"PER Relative Change (%) since {start_year}", "Change (%)")
             ax.set_xticks(range(len(indexed_per)))
-            ax.set_xticklabels(x_labels, rotation=45)
-            ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
+            ax.set_xticklabels(x_labels, rotation=45, color='black') # X축 라벨 강제 노출
+            ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black', labelcolor='black', fontsize=10)
             st.pyplot(fig)
 
     # --- Tab 2: EPS (%) ---
@@ -183,15 +181,14 @@ if analyze_btn:
                 base_val = base_data[t].dropna().iloc[0]
                 
                 plot_df = df.reindex(c_idx)
-                # % 변환: (값 / 기준값 - 1) * 100
                 norm_vals = (plot_df[t] / base_val - 1) * 100
-                
                 act_m, est_m = plot_df['type'] == 'Actual', plot_df['type'] == 'Estimate'
+                final_val = norm_vals.dropna().values[-1]
                 color = plt.cm.Set1(i % 9)
                 
                 if act_m.any():
                     x_act = [c_idx.index(idx) for idx in plot_df[act_m].index]
-                    ax.plot(x_act, norm_vals[act_m], marker='o', label=t, linewidth=2.5, color=color, markersize=8)
+                    ax.plot(x_act, norm_vals[act_m], marker='o', label=f"{t} ({final_val:+.1f}%)", linewidth=2.5, color=color, markersize=6)
                     if est_m.any():
                         last_act = plot_df[act_m].index[-1]
                         e_indices = [last_act] + list(plot_df[est_m].index)
@@ -200,6 +197,6 @@ if analyze_btn:
 
             apply_strong_style(ax, f"EPS Growth (%) since {start_year}-Q1", "Growth (%)")
             ax.set_xticks(range(len(c_idx)))
-            ax.set_xticklabels(c_idx, rotation=45)
-            ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
+            ax.set_xticklabels(c_idx, rotation=45, color='black') # X축 라벨 강제 노출
+            ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black', labelcolor='black', fontsize=10)
             st.pyplot(fig)
