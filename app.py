@@ -20,11 +20,11 @@ def apply_strong_style(ax, title, ylabel):
     ax.set_ylabel(ylabel, fontsize=11, fontweight='bold', color='black')
     ax.grid(True, linestyle='--', alpha=0.5, color='#d3d3d3')
     ax.spines['bottom'].set_color('black')
-    ax.spines['bottom'].set_linewidth(1.2)
+    ax.spines['bottom'].set_linewidth(1.5)
     ax.spines['left'].set_color('black')
-    ax.spines['left'].set_linewidth(1.2)
+    ax.spines['left'].set_linewidth(1.5)
     ax.tick_params(axis='both', colors='black', labelsize=9)
-    ax.axhline(0, color='black', linewidth=1.2, zorder=2)
+    ax.axhline(0, color='black', linewidth=1.5, zorder=2)
     ax.yaxis.set_major_formatter(mtick.PercentFormatter())
 
 # --- [데이터 처리 함수들] ---
@@ -158,7 +158,7 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
         with col2:
             start_year = st.number_input("📅 기준 연도", 2010, 2025, 2020)
         with col3:
-            # 미래 예측 옵션의 DEFAULT 값을 None (index=0)으로 수정
+            # 미래 예측 옵션의 DEFAULT 값은 'None' (index=0) 유지
             predict_mode = st.radio(
                 "🔮 미래 예측 옵션",
                 ("None", "현재 분기 예측", "다음 분기 예측"),
@@ -185,6 +185,7 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
                 master_per = master_per[master_per.index >= f"{start_year}-01-01"].sort_index()
                 indexed_per = (master_per / master_per.iloc[0] - 1) * 100
                 
+                # 그래프 크기 80% (9.6 x 4.8)
                 fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
                 colors = plt.cm.tab10(np.linspace(0, 1, len(tickers)))
                 x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
@@ -194,10 +195,10 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
                     f_count = 1 if predict_mode == "현재 분기 예측" else (2 if predict_mode == "다음 분기 예측" else 0)
                     h_end = len(series) - f_count
                     ax.plot(range(h_end), series.values[:h_end], marker='o', 
-                            label=f"{ticker} ({series.values[-1]:+.1f}%)", color=colors[i], linewidth=2.0)
+                            label=f"{ticker} ({series.values[-1]:+.1f}%)", color=colors[i], linewidth=2.5)
                     if f_count > 0:
                         ax.plot(range(h_end-1, len(series)), series.values[h_end-1:], 
-                                linestyle='--', color=colors[i], linewidth=1.8, alpha=0.8)
+                                linestyle='--', color=colors[i], linewidth=2.0, alpha=0.8)
                 
                 apply_strong_style(ax, f"Relative PER Change (%) since {start_year}", "Change (%)")
                 ax.set_xticks(range(len(indexed_per))); ax.set_xticklabels(x_labels, rotation=45)
@@ -232,12 +233,12 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
                         last_act_pos = actual_indices[-1]
                         ax.plot(range(last_act_pos + 1), norm_vals.iloc[:last_act_pos + 1], 
                                 marker='o', label=f"{t} ({norm_vals.dropna().values[-1]:+.1f}%)", 
-                                color=color, linewidth=2.0)
+                                color=color, linewidth=2.5)
                         
                         if predict_mode != "None":
                             ax.plot(range(last_act_pos, len(filtered_idx)), 
                                     norm_vals.iloc[last_act_pos:], 
-                                    linestyle='--', color=color, linewidth=1.8)
+                                    linestyle='--', color=color, linewidth=2.0)
                 
                 apply_strong_style(ax, f"Normalized EPS Growth (%) since {start_year}-Q1", "Growth (%)")
                 ax.set_xticks(range(len(filtered_idx))); ax.set_xticklabels(filtered_idx, rotation=45)
@@ -265,13 +266,22 @@ else: # ETF 수익률 분석 모드
                 filtered_etf = df_etf.loc[valid_start:]
                 norm_etf = (filtered_etf / filtered_etf.iloc[0] - 1) * 100
                 last_vals = norm_etf.iloc[-1].sort_values(ascending=False)
-                fig, ax = plt.subplots(figsize=(10, 5), facecolor='white') 
+                
+                fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
                 quarter_ticks = [d for d in norm_etf.index if d.endswith(('-01', '-04', '-07', '-10'))]
-                for ticker in last_vals.index:
-                    lw = 3.0 if ticker in ["SPY", "QQQ"] else 1.5
-                    z = 5 if ticker in ["SPY", "QQQ"] else 2
+                
+                # --- 색상 선명도 및 진함 개선 (D3 Category10 컬러맵 사용) ---
+                vivid_colors = plt.cm.get_cmap('tab10', len(selected_etfs))
+                
+                for i, ticker in enumerate(last_vals.index):
+                    # 주요 지수인 SPY, QQQ는 더 굵게 강조
+                    lw = 4.0 if ticker in ["SPY", "QQQ"] else 2.5
+                    z = 10 if ticker in ["SPY", "QQQ"] else 5
+                    
                     ax.plot(norm_etf.index, norm_etf[ticker], 
-                            label=f"{ticker} ({last_vals[ticker]:+.1f}%)", linewidth=lw, zorder=z)
+                            label=f"{ticker} ({last_vals[ticker]:+.1f}%)", 
+                            color=vivid_colors(i), linewidth=lw, zorder=z)
+                
                 apply_strong_style(ax, f"ETF Sector Performance (%) since {valid_start}", "Return (%)")
                 ax.set_xticks(quarter_ticks); ax.set_xticklabels(quarter_ticks, rotation=45)
                 ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, facecolor='white', edgecolor='black', labelcolor='black', fontsize=9)
