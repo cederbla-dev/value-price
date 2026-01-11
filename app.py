@@ -20,21 +20,24 @@ def fmt(val):
     try:
         return "{:.2f}".format(float(val))
     except:
-        return val
+        return str(val)
+
+# 데이터프레임 전체에 fmt 적용 함수
+def format_df(df):
+    return df.map(lambda x: fmt(x) if isinstance(x, (int, float)) else x)
 
 # -----------------------------------------------------------
-# [Module 1] 개별 종목 밸류에이션 (File #6: 연도별 적정주가 시뮬레이션)
+# [Module 1] 개별 종목 밸류에이션 (File #6 & #10 통합)
 # -----------------------------------------------------------
 def run_single_valuation():
-    st.header("💎 개별 종목 밸류에이션 (연도별 적정주가 시뮬레이션)")
+    st.header("💎 개별 종목 밸류에이션")
     
     # 1. UI 입력
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         ticker = st.text_input("티커 입력 (예: TSLA)", "TSLA").upper().strip()
     with col2:
-        # 그래프로 보고 싶은 기준 연도 선택
-        base_year_input = st.selectbox("차트 기준 연도 (Base Year)", range(2017, 2026), index=0)
+        base_year_input = st.selectbox("File 6: 차트 기준 연도", range(2017, 2026), index=0)
     with col3:
         include_est = st.radio("미래 예측치(Estimates) 포함", ["None", "Current Q", "Next Q"], horizontal=True)
 
@@ -65,152 +68,190 @@ def run_single_valuation():
 
             # 날짜 처리
             eps_df.index = pd.to_datetime(eps_df.index, format='%y.%m.%d', errors='coerce')
-            eps_df = eps_df.dropna()
+            eps_df = eps_df.dropna().sort_index()
 
-            # 회계 분기 매칭을 위한 날짜 보정 (5일 이하는 전월 귀속)
+            # 회계 분기 매칭을 위한 날짜 보정
             def adjust_date(dt):
                 return (dt.replace(day=1) - timedelta(days=1)).strftime('%Y-%m') if dt.day <= 5 else dt.strftime('%Y-%m')
             
-            eps_df.index = [adjust_date(d) for d in eps_df.index]
-            eps_df['EPS'] = pd.to_numeric(eps_df['EPS'].astype(str).str.replace(',', ''), errors='coerce')
+            # File 6용 월별 날짜 (문자열 인덱스)
+            eps_df_monthly = eps_df.copy()
+            eps_df_monthly.index = [adjust_date(d) for d in eps_df_monthly.index]
+            eps_df_monthly['EPS'] = pd.to_numeric(eps_df_monthly['EPS'].astype(str).str.replace(',', ''), errors='coerce')
 
-            # --- [B] Yahoo Finance에서 월간 주가 수집 ---
+            # File 10용 날짜 (Timestamp 인덱스, 2017 이후)
+            eps_df_raw = eps_df.copy()
+            eps_df_raw.columns = ['EPS']
+            eps_df_raw['EPS'] = pd.to_numeric(eps_df_raw['EPS'].astype(str).str.replace(',', ''), errors='coerce')
+            eps_df_raw = eps_df_raw[eps_df_raw.index >= "2017-01-01"]
+
+            # --- [B] Yahoo Finance 주가 수집 ---
             stock = yf.Ticker(ticker)
-            price_df = stock.history(start="2017-01-01", interval="1mo", auto_adjust=False)
             
-            if price_df.empty:
-                st.error("주가 데이터를 가져올 수 없습니다."); return
-                
-            price_df.index = price_df.index.tz_localize(None).strftime('%Y-%m')
-            price_df = price_df[['Close']].copy()
-            # 월말 데이터 유지를 위해 중복 제거 시 마지막 값 사용
-            price_df = price_df[~price_df.index.duplicated(keep='last')]
-
-            # --- [C] 데이터 병합 (EPS + Price) ---
-            combined = pd.merge(eps_df, price_df, left_index=True, right_index=True, how='inner')
-            combined = combined.sort_index(ascending=True)
+            # File 6용 월봉 데이터
+            price_month = stock.history(start="2017-01-01", interval="1mo", auto_adjust=False)
+            price_month.index = price_month.index.tz_localize(None).strftime('%Y-%m')
+            price_month = price_month[['Close']].copy()
+            price_month = price_month[~price_month.index.duplicated(keep='last')]
             
-            if combined.empty:
-                st.warning("EPS와 주가 데이터의 날짜가 일치하는 구간이 없습니다."); return
-
-            # --- [D] 미래 예측치(Estimates) 추가 로직 ---
-            current_price = price_df['Close'].iloc[-1]
-            if include_est != "None":
-                est = stock.earnings_estimate
-                if est is not None and not est.empty:
-                    last_date_obj = pd.to_datetime(combined.index[-1])
-                    
-                    # Current Q
-                    try:
-                        curr_val = est['avg'].iloc[0]
-                        date_curr = (last_date_obj + pd.DateOffset(months=3)).strftime('%Y-%m')
-                        combined.loc[f"{date_curr} (Est.)"] = [curr_val, current_price]
-                        
-                        # Next Q
-                        if include_est == "Next Q" and len(est) > 1:
-                            next_val = est['avg'].iloc[1]
-                            date_next = (last_date_obj + pd.DateOffset(months=6)).strftime('%Y-%m')
-                            combined.loc[f"{date_next} (Est.)"] = [next_val, current_price]
-                    except:
-                        pass # 예측치 인덱싱 에러 무시
-
-            # --- [E] 연도별 시뮬레이션 및 요약 데이터 생성 ---
-            summary_data = []
-            final_price = combined['Close'].iloc[-1]
-            target_date_label = combined.index[-1]
+            # File 10용 일봉 데이터
+            price_daily = stock.history(start="2017-01-01", interval="1d")
+            if price_daily.index.tz is not None:
+                price_daily.index = price_daily.index.tz_localize(None)
+            price_daily_series = price_daily['Close']
             
-            # 그래프를 그리기 위한 데이터 저장소
-            selected_plot_data = None
-            selected_scale_factor = 0
-
-            for base_year in range(2017, 2026):
-                # 해당 연도 이후 데이터 필터링
-                df_plot = combined[combined.index >= f'{base_year}-01'].copy()
-                
-                if len(df_plot) < 2: continue
-                
-                base_eps = df_plot.iloc[0]['EPS']
-                base_price = df_plot.iloc[0]['Close']
-                
-                # 적자가 아닌 경우만 분석
-                if base_eps <= 0: continue
-
-                # PER 배수 산출
-                scale_factor = base_price / base_eps
-                # 적정주가(Fair Value) 계산
-                df_plot['Fair_Value'] = df_plot['EPS'] * scale_factor
-
-                final_fair_value = df_plot.iloc[-1]['Fair_Value']
-                # 괴리율: (현재가 - 적정가) / 적정가
-                gap_pct = ((final_price - final_fair_value) / final_fair_value) * 100
-                status = "고평가 (Sell)" if gap_pct > 0 else "저평가 (Buy)"
-
-                summary_data.append({
-                    "기준 연도": base_year,
-                    "적용 PER": scale_factor,
-                    "적정 주가": final_fair_value,
-                    "현재 주가": final_price,
-                    "괴리율 (%)": gap_pct,
-                    "판단": status
-                })
-
-                # 사용자가 선택한 연도의 데이터 저장
-                if base_year == base_year_input:
-                    selected_plot_data = df_plot
-                    selected_scale_factor = scale_factor
-
-            # --- [F] 결과 시각화 및 출력 ---
-            
-            # 1. 그래프 출력 (선택한 기준 연도)
-            if selected_plot_data is not None:
-                fig, ax = plt.subplots(figsize=(14, 7))
-                
-                # 시장가
-                ax.plot(selected_plot_data.index, selected_plot_data['Close'], 
-                        label=f'Market Price', color='#1f77b4', linewidth=3, marker='o')
-                
-                # 적정가
-                ax.plot(selected_plot_data.index, selected_plot_data['Fair_Value'], 
-                        label=f'Fair Value (Base {base_year_input}, PER {selected_scale_factor:.2f}x)', 
-                        color='#d62728', linestyle='--', linewidth=2, marker='s')
-
-                # 예측 구간 하이라이트
-                est_indices = [i for i, idx in enumerate(selected_plot_data.index) if "(Est.)" in idx]
-                if est_indices:
-                    for i in est_indices:
-                        ax.axvspan(i-0.5, i+0.5, color='orange', alpha=0.2)
-                        ax.text(i, selected_plot_data['Fair_Value'].iloc[i], 'Est.', 
-                                ha='center', va='bottom', color='red', fontweight='bold')
-
-                ax.set_title(f"[{ticker}] Price vs Fair Value (Base Year: {base_year_input})", fontsize=16)
-                ax.legend(fontsize=12)
-                plt.xticks(rotation=45)
-                plt.grid(True, linestyle=':', alpha=0.6)
-                st.pyplot(fig)
+            # 현재가
+            if not price_daily.empty:
+                current_price = price_daily['Close'].iloc[-1]
             else:
-                st.warning(f"{base_year_input}년 기준 데이터가 부족하거나 적자여서 그래프를 그릴 수 없습니다.")
+                st.error("주가 데이터를 가져올 수 없습니다."); return
 
-            # 2. 요약 테이블 출력
-            if summary_data:
-                st.subheader(f"📊 연도별 밸류에이션 시뮬레이션 결과 ({target_date_label} 기준)")
-                summary_df = pd.DataFrame(summary_data)
+            # --- [C] 탭 구성 ---
+            tab1, tab2 = st.tabs(["📉 연도별 시뮬레이션 (File 6)", "📊 4분기 실적 기반 분석 (File 10)"])
+
+            # -------------------------------------------------------
+            # Tab 1: File 6 Logic (연도별 적정주가)
+            # -------------------------------------------------------
+            with tab1:
+                # 데이터 병합 (EPS + Price)
+                combined = pd.merge(eps_df_monthly, price_month, left_index=True, right_index=True, how='inner')
+                combined = combined.sort_index(ascending=True)
                 
-                # 소수점 2자리 포맷팅 적용
-                summary_df["적용 PER"] = summary_df["적용 PER"].map('{:.2f}'.format)
-                summary_df["적정 주가"] = summary_df["적정 주가"].map('{:.2f}'.format)
-                summary_df["현재 주가"] = summary_df["현재 주가"].map('{:.2f}'.format)
-                summary_df["괴리율 (%)"] = summary_df["괴리율 (%)"].map('{:.2f}'.format)
+                # 미래 예측치 추가
+                if include_est != "None":
+                    est = stock.earnings_estimate
+                    if est is not None and not est.empty:
+                        last_date_obj = pd.to_datetime(combined.index[-1])
+                        try:
+                            curr_val = est['avg'].iloc[0]
+                            date_curr = (last_date_obj + pd.DateOffset(months=3)).strftime('%Y-%m')
+                            combined.loc[f"{date_curr} (Est.)"] = [curr_val, current_price]
+                            if include_est == "Next Q" and len(est) > 1:
+                                next_val = est['avg'].iloc[1]
+                                date_next = (last_date_obj + pd.DateOffset(months=6)).strftime('%Y-%m')
+                                combined.loc[f"{date_next} (Est.)"] = [next_val, current_price]
+                        except: pass
+
+                # 시뮬레이션 루프
+                summary_data_6 = []
+                selected_plot_data = None
+                selected_scale_factor = 0
+
+                for base_year in range(2017, 2026):
+                    df_plot = combined[combined.index >= f'{base_year}-01'].copy()
+                    if len(df_plot) < 2 or df_plot.iloc[0]['EPS'] <= 0: continue
+
+                    scale_factor = df_plot.iloc[0]['Close'] / df_plot.iloc[0]['EPS']
+                    df_plot['Fair_Value'] = df_plot['EPS'] * scale_factor
+                    
+                    final_fair = df_plot.iloc[-1]['Fair_Value']
+                    gap = ((current_price - final_fair) / final_fair) * 100
+                    status = "고평가" if gap > 0 else "저평가"
+
+                    summary_data_6.append({
+                        "기준 연도": base_year,
+                        "적용 PER": scale_factor,
+                        "적정 주가": final_fair,
+                        "현재 주가": current_price,
+                        "괴리율 (%)": gap,
+                        "판단": status
+                    })
+
+                    if base_year == base_year_input:
+                        selected_plot_data = df_plot
+                        selected_scale_factor = scale_factor
+
+                # 그래프 및 표 출력
+                if selected_plot_data is not None:
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    ax.plot(selected_plot_data.index, selected_plot_data['Close'], label='Market Price', color='#1f77b4', marker='o')
+                    ax.plot(selected_plot_data.index, selected_plot_data['Fair_Value'], label=f'Fair Value (Base {base_year_input})', color='#d62728', linestyle='--', marker='s')
+                    
+                    est_idx = [i for i, idx in enumerate(selected_plot_data.index) if "(Est.)" in idx]
+                    if est_idx:
+                        for i in est_idx:
+                            ax.axvspan(i-0.5, i+0.5, color='orange', alpha=0.2)
+                    
+                    ax.set_title(f"Price vs Fair Value (Base: {base_year_input})")
+                    plt.xticks(rotation=45); ax.legend(); st.pyplot(fig)
                 
-                st.table(summary_df)
-                st.info("Tip: '저평가' 신호가 많은 연도가 많을수록 역사적 밸류에이션 하단에 근접했을 확률이 높습니다.")
+                if summary_data_6:
+                    st.write(f"### 📋 연도별 시뮬레이션 요약")
+                    st.table(format_df(pd.DataFrame(summary_data_6)))
+
+            # -------------------------------------------------------
+            # Tab 2: File 10 Logic (4분기 실적 기반 적정주가)
+            # -------------------------------------------------------
+            with tab2:
+                # 1. Target EPS 계산 (최근 3개 확정 + 현재 분기 예측)
+                est = stock.earnings_estimate
+                curr_q_est = est['avg'].iloc[0] if (est is not None and not est.empty) else 0
+                
+                if len(eps_df_raw) >= 3:
+                    recent_3_actuals = eps_df_raw['EPS'].iloc[-3:].sum()
+                    final_target_eps = recent_3_actuals + curr_q_est
+                else:
+                    st.warning("데이터 부족으로 Target EPS를 계산할 수 없습니다."); return
+
+                # 2. 4분기 단위 루프 분석
+                processed_data_10 = []
+                # File 10 로직: 0부터 4씩 건너뛰며 그룹화
+                for i in range(0, len(eps_df_raw) - 3, 4):
+                    group = eps_df_raw.iloc[i:i+4]
+                    eps_sum = group['EPS'].sum()
+                    s_date, e_date = group.index[0], group.index[-1]
+                    
+                    # 해당 기간 평균 주가
+                    avg_price = price_daily_series[s_date:e_date].mean()
+                    if pd.isna(avg_price): continue
+                    
+                    per = avg_price / eps_sum if eps_sum > 0 else 0
+                    
+                    # File 10 핵심: 과거의 PER을 현재 Target EPS에 적용
+                    fair_value_now = final_target_eps * per
+                    gap_pct = ((current_price / fair_value_now) - 1) * 100 if fair_value_now else 0
+                    status = "저평가" if current_price < fair_value_now else "고평가"
+                    
+                    period_str = f"{s_date.year}.{s_date.month} ~ {e_date.year}.{e_date.month}"
+                    
+                    processed_data_10.append({
+                        "기간": period_str,
+                        "EPS 합계": eps_sum,
+                        "평균 주가": avg_price,
+                        "평균 PER": per,
+                        "적정 주가 (현재 기준)": fair_value_now,
+                        "괴리율 (%)": gap_pct,
+                        "판단": status
+                    })
+                
+                if processed_data_10:
+                    df_10 = pd.DataFrame(processed_data_10)
+                    
+                    # 요약 통계
+                    valid_pers = [d['평균 PER'] for d in processed_data_10 if d['평균 PER'] > 0]
+                    avg_past_per = np.mean(valid_pers) if valid_pers else 0
+                    cur_fair_final = final_target_eps * avg_past_per
+                    cur_gap_final = ((current_price / cur_fair_final) - 1) * 100 if cur_fair_final else 0
+                    
+                    st.markdown(f"""
+                    ### 🎯 분석 요약
+                    * **분석 기준 EPS (Target EPS):** ${fmt(final_target_eps)} (최근 3분기 실적 + 현재 분기 예측)
+                    * **현재 주가:** ${fmt(current_price)}
+                    * **과거 평균 PER 기준 적정가:** ${fmt(cur_fair_final)} (평균 PER: {fmt(avg_past_per)}배)
+                    * **상태:** **{fmt(abs(cur_gap_final))}% {"저평가" if current_price < cur_fair_final else "고평가"}**
+                    """)
+                    
+                    st.write("### 📋 기간별 PER 적용 시뮬레이션")
+                    st.table(format_df(df_10))
+                else:
+                    st.warning("분석할 과거 데이터 구간이 충분하지 않습니다.")
 
         except Exception as e:
-            st.error(f"데이터 분석 중 오류가 발생했습니다: {e}")
+            st.error(f"분석 중 오류 발생: {e}")
 
 # -----------------------------------------------------------
-# [Module 2] 종목 비교 분석 (Files #9, #13: Sync & Comparison)
+# [Module 2] 종목 비교 분석 (Files #9, #13)
 # -----------------------------------------------------------
-# 날짜 정규화 함수 (Shared)
 def normalize_to_standard_quarter(dt):
     month, year = dt.month, dt.year
     if month in [1, 2, 3]:   new_month = 3
@@ -242,10 +283,9 @@ def fetch_comp_data(ticker, show_q1, show_q2):
             if est is not None and not est.empty:
                 historical_eps = combined['EPS'].tolist()
                 q1_dt = combined.index[-1] + pd.DateOffset(months=3)
-                # TTM EPS 추정 (최근 3분기 + 예상 1분기)
                 ttm_eps_q1 = sum(historical_eps[-3:]) + est.loc['0q', 'avg']
                 combined.loc[q1_dt, 'PER'] = current_price / ttm_eps_q1 if ttm_eps_q1 != 0 else 0
-                combined.loc[q1_dt, 'EPS'] = ttm_eps_q1 # 시각화를 위해 저장
+                combined.loc[q1_dt, 'EPS'] = ttm_eps_q1
                 
                 if show_q2:
                     q2_dt = q1_dt + pd.DateOffset(months=3)
@@ -281,7 +321,6 @@ def run_comparison():
 
         if not master_df.empty:
             master_df = master_df[master_df.index >= f"{start_year}-01-01"].sort_index()
-            # 기준점(100) 정규화
             indexed_df = (master_df / master_df.iloc[0]) * 100
             
             fig, ax = plt.subplots(figsize=(15, 8))
@@ -290,45 +329,33 @@ def run_comparison():
             for ticker in indexed_df.columns:
                 series = indexed_df[ticker].dropna()
                 valid_indices = [indexed_df.index.get_loc(dt) for dt in series.index]
-                
-                # 예측치 구간 처리
                 forecast_count = (1 if q1 else 0) + (1 if q2 else 0)
-                
-                # 범례에 마지막 값 표시 (소수점 2자리)
                 last_val = series.iloc[-1]
                 label_txt = f"{ticker} ({last_val:.2f})"
 
                 if forecast_count > 0 and len(valid_indices) > forecast_count:
-                    # 실적 구간
                     ax.plot(valid_indices[:-forecast_count], series.values[:-forecast_count], marker='o', label=label_txt)
-                    # 예측 구간 (점선)
                     ax.plot(valid_indices[-forecast_count-1:], series.values[-forecast_count-1:], ls='--', marker='x', alpha=0.7)
                 else:
                     ax.plot(valid_indices, series.values, marker='o', label=label_txt)
             
-            ax.set_xticks(range(len(indexed_df)))
-            ax.set_xticklabels(x_labels, rotation=45)
+            ax.set_xticks(range(len(indexed_df))); ax.set_xticklabels(x_labels, rotation=45)
             ax.axhline(100, color='black', alpha=0.5, ls='--')
             ax.set_title(f"Compare: {comp_mode} (Base 100)")
-            ax.legend()
-            st.pyplot(fig)
-        else:
-            st.error("유효한 데이터가 없습니다.")
+            ax.legend(); st.pyplot(fig)
+        else: st.error("유효한 데이터가 없습니다.")
 
 # -----------------------------------------------------------
-# [Module 3] 섹터 수익률 분석 (File #12: Performance)
+# [Module 3] 섹터 수익률 분석 (File #12)
 # -----------------------------------------------------------
 def run_sector_perf():
     st.header("📊 섹터 및 지수 수익률 분석 (분기 기준)")
-    
     all_tickers = ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY", "SPY", "QQQ"]
     selected = st.multiselect("분석할 ETF 선택", all_tickers, default=["SPY", "QQQ", "XLK"])
     
     col1, col2 = st.columns(2)
-    with col1:
-        sel_year = st.selectbox("시작 연도", range(2017, datetime.now().year + 1))
-    with col2:
-        sel_quarter = st.selectbox("시작 분기", [1, 2, 3, 4])
+    with col1: sel_year = st.selectbox("시작 연도", range(2017, datetime.now().year + 1))
+    with col2: sel_quarter = st.selectbox("시작 분기", [1, 2, 3, 4])
     
     q_map = {1: "-01-01", 2: "-04-01", 3: "-07-01", 4: "-10-01"}
     start_date_str = f"{sel_year}{q_map[sel_quarter]}"
@@ -336,7 +363,6 @@ def run_sector_perf():
     if st.button("수익률 차트 생성"):
         combined_price = pd.DataFrame()
         for t in selected:
-            # 수정 주가 (배당 재투자 가정)
             df = yf.Ticker(t).history(start="2017-01-01", interval="1mo", auto_adjust=True)
             if not df.empty:
                 df.index = df.index.strftime('%Y-%m-%d')
@@ -344,41 +370,26 @@ def run_sector_perf():
         
         if not combined_price.empty:
             available_dates = combined_price.index[combined_price.index >= start_date_str]
-            if len(available_dates) == 0:
-                st.error("해당 시점 이후의 데이터가 없습니다."); return
+            if len(available_dates) == 0: st.error("데이터 없음"); return
             
             base_date = available_dates[0]
-            # 정규화 (Base=100)
             norm_df = (combined_price.loc[base_date:] / combined_price.loc[base_date]) * 100
             
             fig, ax = plt.subplots(figsize=(15, 8))
             last_val_idx = norm_df.iloc[-1].sort_values(ascending=False)
-            
             for ticker in last_val_idx.index:
                 lw = 4 if ticker in ["SPY", "QQQ"] else 2
                 zo = 5 if ticker in ["SPY", "QQQ"] else 2
-                # 범례 소수점 2자리
                 ax.plot(norm_df.index, norm_df[ticker], label=f"{ticker} ({last_val_idx[ticker]:.2f})", linewidth=lw, zorder=zo)
             
-            # X축 틱 설정
             q_ticks = [d for d in norm_df.index if d.endswith(('-01-01', '-04-01', '-07-01', '-10-01'))]
             ax.set_xticks(q_ticks if q_ticks else norm_df.index[::3])
-            plt.xticks(rotation=45)
-            ax.axhline(100, color='black', ls='--')
-            ax.set_title(f"ETF Performance (Base: {base_date} = 100)")
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            st.pyplot(fig)
+            plt.xticks(rotation=45); ax.axhline(100, color='black', ls='--')
+            ax.set_title(f"ETF Performance (Base: {base_date} = 100)"); ax.legend(); st.pyplot(fig)
             
-            # --- [Table] 누적 수익률 (%) 표시 ---
             st.write(f"### 🏆 {base_date} 이후 누적 수익률 (%)")
-            
-            # 100을 빼서 순수 수익률 계산
             performance_pct = (last_val_idx - 100).to_frame(name="수익률 (%)")
-            
-            # 소수점 2자리 강제 문자열 포맷팅
-            performance_pct["수익률 (%)"] = performance_pct["수익률 (%)"].map('{:.2f}'.format)
-            
-            st.table(performance_pct)
+            st.table(format_df(performance_pct))
 
 # -----------------------------------------------------------
 # [Main] 메인 메뉴 컨트롤러
@@ -392,23 +403,21 @@ def main():
         st.title("US Stock Analysis System")
         st.markdown("""
         ### 환영합니다!
-        이 시스템은 **ChoiceStock**의 재무 데이터와 **Yahoo Finance**의 시장 데이터를 결합하여 
-        다각도로 미국 주식을 분석합니다.
+        이 시스템은 **ChoiceStock**의 재무 데이터와 **Yahoo Finance**의 시장 데이터를 결합하여 분석합니다.
         
         #### 📌 주요 기능
-        1. **개별 종목 밸류에이션**: 과거 특정 연도의 PER을 기준으로 현재 주가의 적정성을 시뮬레이션합니다. (File #6)
-        2. **종목 비교 분석**: 여러 종목의 PER 및 EPS 성장 추세를 동일한 분기 기준으로 비교합니다. (File #9, #13)
-        3. **섹터 수익률**: 주요 ETF 및 지수의 분기별 누적 수익률을 비교합니다. (File #12)
-        
-        *모든 수치는 소수점 두 자리로 정밀하게 표시됩니다.*
+        1. **개별 종목 밸류에이션**:
+            * **Tab 1**: 연도별 적정주가 시뮬레이션 (File #6)
+            * **Tab 2**: 4분기 실적 기반 분석 (File #10) 
+
+[Image of financial statement analysis]
+
+        2. **종목 비교 분석**: PER 및 EPS 성장 추세 비교 (File #9, #13)
+        3. **섹터 수익률**: 분기별 ETF 누적 수익률 (File #12)
         """)
-        
-    elif menu == "개별 종목 밸류에이션":
-        run_single_valuation()
-    elif menu == "종목 비교 분석":
-        run_comparison()
-    elif menu == "섹터/지수 수익률":
-        run_sector_perf()
+    elif menu == "개별 종목 밸류에이션": run_single_valuation()
+    elif menu == "종목 비교 분석": run_comparison()
+    elif menu == "섹터/지수 수익률": run_sector_perf()
 
 if __name__ == "__main__":
     main()
