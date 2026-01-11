@@ -23,7 +23,7 @@ def format_df(df):
     return df.map(lambda x: fmt(x) if isinstance(x, (int, float)) else x)
 
 # -----------------------------------------------------------
-# [Module 1] 개별 종목 밸류에이션 (File #6 & #10 통합)
+# [Module 1] 개별 종목 밸류에이션 (기존 기능 유지)
 # -----------------------------------------------------------
 def run_single_valuation():
     st.header("💎 개별 종목 밸류에이션")
@@ -38,7 +38,6 @@ def run_single_valuation():
 
     if ticker:
         try:
-            # 데이터 수집 (ChoiceStock)
             url = f"https://www.choicestock.co.kr/search/invest/{ticker}/MRQ"
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers, timeout=10)
@@ -65,7 +64,6 @@ def run_single_valuation():
             tab1, tab2 = st.tabs(["📉 연도별 시뮬레이션", "📊 4분기 실적 기반 분석"])
 
             with tab1:
-                # File 6 로직
                 combined = eps_df_raw.copy()
                 combined.index = combined.index.strftime('%Y-%m')
                 price_m = stock.history(start="2017-01-01", interval="1mo")['Close']
@@ -88,7 +86,6 @@ def run_single_valuation():
                 st.table(format_df(pd.DataFrame(summary_data)))
 
             with tab2:
-                # File 10 로직
                 est = stock.earnings_estimate
                 target_eps = eps_df_raw['EPS'].iloc[-3:].sum() + (est['avg'].iloc[0] if est is not None else 0)
                 res10 = []
@@ -105,7 +102,7 @@ def run_single_valuation():
             st.error(f"오류 발생: {e}")
 
 # -----------------------------------------------------------
-# [Module 2] 종목 비교 분석 (EPS 성장률 쿼터 레이블 동기화 버전)
+# [Module 2] 종목 비교 분석 (Quarter Sync + 성장률 % 반영)
 # -----------------------------------------------------------
 def get_future_estimates_yf(ticker):
     try:
@@ -118,7 +115,7 @@ def get_future_estimates_yf(ticker):
     except: pass
     return None
 
-def _get_ticker_data_integrated(ticker):
+def _get_ticker_data_integrated(ticker, include_mode):
     url = f"https://www.choicestock.co.kr/search/invest/{ticker}/MRQ"
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
@@ -133,7 +130,6 @@ def _get_ticker_data_integrated(ticker):
         eps_df.index = pd.to_datetime(eps_df.index, format='%y.%m.%d', errors='coerce')
         eps_df = eps_df.dropna()
         
-        # 쿼터 레이블 변환 (핵심: 결산월 차이 극복)
         def to_quarter_label(dt):
             actual_dt = (dt.replace(day=1) - timedelta(days=1)) if dt.day <= 5 else dt
             return f"{actual_dt.year}-Q{(actual_dt.month-1)//3 + 1}"
@@ -143,36 +139,48 @@ def _get_ticker_data_integrated(ticker):
         eps_df = eps_df.groupby(level=0).last()
         eps_df['type'] = 'Actual'
 
-        estimates = get_future_estimates_yf(ticker)
-        if estimates:
-            last_q = eps_df.index[-1]
-            year, q = int(last_q.split('-Q')[0]), int(last_q.split('-Q')[1])
-            for i, key in enumerate(['current', 'next'], 1):
-                val = estimates[key]
-                if val is not None:
-                    new_q_val = q + i
+        # 예측치 선택 로직 적용
+        if include_mode != "None":
+            estimates = get_future_estimates_yf(ticker)
+            if estimates:
+                last_q = eps_df.index[-1]
+                year, q = int(last_q.split('-Q')[0]), int(last_q.split('-Q')[1])
+                
+                # Current Q 추가
+                if estimates['current'] is not None:
+                    new_q_val = q + 1
                     new_year = year + (new_q_val - 1) // 4
-                    actual_q = (new_q_val - 1) % 4 + 1
-                    q_label = f"{new_year}-Q{actual_q}"
-                    eps_df.loc[q_label, ticker] = val
+                    q_label = f"{new_year}-Q{(new_q_val - 1) % 4 + 1}"
+                    eps_df.loc[q_label, ticker] = estimates['current']
                     eps_df.loc[q_label, 'type'] = 'Estimate'
+                
+                # Next Q 추가 (옵션이 Next Q일 때만)
+                if include_mode == "Next Q" and estimates['next'] is not None:
+                    new_q_val = q + 2
+                    new_year = year + (new_q_val - 1) // 4
+                    q_label = f"{new_year}-Q{(new_q_val - 1) % 4 + 1}"
+                    eps_df.loc[q_label, ticker] = estimates['next']
+                    eps_df.loc[q_label, 'type'] = 'Estimate'
+                    
         return eps_df
     except: return pd.DataFrame()
 
 def run_comparison():
     st.header("⚖️ 종목 간 EPS 성장률 비교 (Quarter Sync)")
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         tickers_input = st.text_input("비교 티커 (쉼표 구분)", "SNPS, FDS, GOOGL")
         t_list = [x.strip().upper() for x in tickers_input.replace(',', ' ').split() if x.strip()]
     with col2:
         start_year = st.number_input("비교 시작 연도", 2010, 2025, 2020)
+    with col3:
+        include_mode = st.radio("예측치 선택", ["None", "Current Q", "Next Q"], horizontal=True)
 
     if st.button("성장률 차트 생성"):
         all_data = []
         for t in t_list:
-            df = _get_ticker_data_integrated(t)
+            df = _get_ticker_data_integrated(t, include_mode)
             if not df.empty: all_data.append(df)
         
         if not all_data:
@@ -186,31 +194,41 @@ def run_comparison():
             ticker = [c for c in df.columns if c != 'type'][0]
             base_data = df[df.index >= f"{start_year}-Q1"]
             if base_data.empty: continue
-            base_val = base_data[ticker].dropna().iloc[0]
             
+            base_val = base_data[ticker].dropna().iloc[0]
             plot_df = df.reindex(combined_index)
             norm_values = plot_df[ticker] / base_val
             
             actual_mask = plot_df['type'] == 'Actual'
             est_mask = plot_df['type'] == 'Estimate'
             
-            x_actual = [combined_index.index(i) for i in plot_df[actual_mask].index]
-            line = ax.plot(x_actual, norm_values[actual_mask], marker='o', label=f"{ticker} (Actual)")
+            # 최종 성장률 계산 (%)
+            final_val = norm_values.dropna().iloc[-1]
+            growth_pct = (final_val - 1) * 100
             
+            # 범례 레이블 수정: (Est.) 삭제 및 성장률 % 표시
+            label_text = f"{ticker} (Actual) {growth_pct:+.1f}%"
+            
+            # 실제 데이터 그리기 (실선)
+            x_actual = [combined_index.index(i) for i in plot_df[actual_mask].index]
+            line = ax.plot(x_actual, norm_values[actual_mask], marker='o', label=label_text, linewidth=2)
+            
+            # 예측 데이터 연결 그리기 (점선) - 범례에서는 제외됨
             if est_mask.any():
                 last_act_idx = plot_df[actual_mask].index[-1]
                 est_indices = [last_act_idx] + list(plot_df[est_mask].index)
                 x_est = [combined_index.index(i) for i in est_indices]
-                ax.plot(x_est, norm_values[est_indices], ls='--', marker='x', color=line[0].get_color(), alpha=0.7, label=f"{ticker} (Est.)")
+                ax.plot(x_est, norm_values[est_indices], ls='--', marker='x', color=line[0].get_color(), alpha=0.7)
 
         ax.set_xticks(range(len(combined_index)))
         ax.set_xticklabels(combined_index, rotation=45)
-        ax.set_ylabel("Normalized Growth (Base=1.0)")
+        ax.set_ylabel(f"Normalized Growth (Base: {start_year}-Q1 = 1.0)")
+        ax.set_title(f"EPS Growth Comparison (Base: {start_year})")
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
         st.pyplot(fig)
 
 # -----------------------------------------------------------
-# [Module 3] 섹터 수익률 분석
+# [Module 3] 섹터 수익률 분석 (기존 기능 유지)
 # -----------------------------------------------------------
 def run_sector_perf():
     st.header("📊 섹터 수익률 분석")
@@ -220,7 +238,10 @@ def run_sector_perf():
     if st.button("수익률 확인"):
         prices = pd.DataFrame()
         for t in selected:
-            prices[t] = yf.Ticker(t).history(start=start_date)['Close']
+            try:
+                data = yf.Ticker(t).history(start=start_date)['Close']
+                if not data.empty: prices[t] = data
+            except: pass
         
         if not prices.empty:
             norm_prices = (prices / prices.iloc[0]) * 100
@@ -231,7 +252,7 @@ def run_sector_perf():
             ax.legend(); st.pyplot(fig)
 
 # -----------------------------------------------------------
-# [Main]
+# [Main] 메인 메뉴 컨트롤러
 # -----------------------------------------------------------
 def main():
     st.sidebar.title("🇺🇸 주식 분석 터미널")
@@ -239,7 +260,7 @@ def main():
     
     if menu == "홈":
         st.title("통합 분석 시스템")
-        st.info("좌측 메뉴에서 분석 도구를 선택하세요. (결산월 자동 보정 기능 적용됨)")
+        st.info("결산월 자동 보정 기능 및 예측치 선택 기능이 적용되었습니다.")
     elif menu == "개별 종목 밸류에이션": run_single_valuation()
     elif menu == "종목 비교 분석": run_comparison()
     elif menu == "섹터 수익률": run_sector_perf()
