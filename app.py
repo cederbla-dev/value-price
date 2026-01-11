@@ -361,8 +361,99 @@ elif main_menu == "개별종목 적정주가 분석 4":
                         st.warning("야후 추정치 기반 분석 모드로 전환")
         except Exception as e: st.error(f"오류: {e}")
 
-# --- 메뉴 5 & 6 코드는 이전과 동일하게 유지 ---
+# --- 메뉴 5: 기업 가치 비교 ---
 elif main_menu == "기업 가치 비교 (PER/EPS)":
-    st.write("기업 가치 비교 모듈 활성화됨")
+    with st.container(border=True):
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col1:
+            ticker_input = st.text_input("🏢 티커 입력", "AAPL, MSFT, NVDA")
+        with col2:
+            start_year = st.number_input("📅 기준 연도", 2010, 2025, 2020)
+        with col3:
+            predict_mode = st.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True, index=0)
+        selected_metric = st.radio("📈 분석 지표 선택", ("PER 증감률 (%)", "EPS 성장률 (%)"), horizontal=True)
+        analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
+
+    if analyze_btn:
+        tickers = [t.strip().upper() for t in ticker_input.replace(',', ' ').split() if t.strip()]
+        if selected_metric == "PER 증감률 (%)":
+            master_per = pd.DataFrame()
+            for t in tickers:
+                s = fetch_per_data(t, predict_mode)
+                if s is not None: master_per[t] = s
+            if not master_per.empty:
+                master_per = master_per[master_per.index >= f"{start_year}-01-01"].sort_index()
+                indexed_per = (master_per / master_per.iloc[0] - 1) * 100
+                fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
+                colors = plt.cm.tab10(np.linspace(0, 1, len(tickers)))
+                x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
+                for i, ticker in enumerate(indexed_per.columns):
+                    series = indexed_per[ticker].dropna()
+                    f_count = 1 if predict_mode == "현재 분기 예측" else (2 if predict_mode == "다음 분기 예측" else 0)
+                    h_end = len(series) - f_count
+                    ax.plot(range(h_end), series.values[:h_end], marker='o', label=f"{ticker} ({series.values[-1]:+.1f}%)", color=colors[i], linewidth=2.5)
+                    if f_count > 0:
+                        ax.plot(range(h_end-1, len(series)), series.values[h_end-1:], linestyle='--', color=colors[i], linewidth=2.0, alpha=0.8)
+                apply_strong_style(ax, f"Relative PER Change since {start_year}", "Change (%)")
+                ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+                ax.set_xticks(range(len(indexed_per))); ax.set_xticklabels(x_labels, rotation=45)
+                ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+                st.pyplot(fig)
+        else: # EPS
+            all_eps = []
+            for t in tickers:
+                df = fetch_eps_data(t, predict_mode)
+                if not df.empty: all_eps.append(df)
+            if all_eps:
+                full_idx = sorted(list(set().union(*(d.index for d in all_eps))))
+                filtered_idx = [idx for idx in full_idx if idx >= f"{start_year}-Q1"]
+                fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
+                for i, df in enumerate(all_eps):
+                    t = [c for c in df.columns if c != 'type'][0]
+                    plot_df = df.reindex(filtered_idx)
+                    valid_data = plot_df[plot_df[t].notna()]
+                    if valid_data.empty: continue
+                    norm_vals = (plot_df[t] / valid_data[t].iloc[0] - 1) * 100
+                    color = plt.cm.Set1(i % 9)
+                    act_mask = plot_df['type'] == 'Actual'
+                    last_act = np.where(act_mask)[0][-1] if any(act_mask) else 0
+                    ax.plot(range(last_act + 1), norm_vals.iloc[:last_act + 1], marker='o', label=f"{t} ({norm_vals.dropna().values[-1]:+.1f}%)", color=color, linewidth=2.5)
+                    if predict_mode != "None":
+                        ax.plot(range(last_act, len(filtered_idx)), norm_vals.iloc[last_act:], linestyle='--', color=color, linewidth=2.0)
+                apply_strong_style(ax, f"Normalized EPS Growth since {start_year}-Q1", "Growth (%)")
+                ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+                ax.set_xticks(range(len(filtered_idx))); ax.set_xticklabels(filtered_idx, rotation=45)
+                ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+                st.pyplot(fig)
+
+# --- 메뉴 6: ETF 섹터 수익률 분석 ---
 else:
-    st.write("ETF 섹터 분석 모듈 활성화됨")
+    with st.container(border=True):
+        col1, col2, col3 = st.columns([3, 1, 1])
+        with col1:
+            sector_list = ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY", "SPY", "QQQ"]
+            selected_etfs = st.multiselect("🌐 ETF 선택", sector_list, default=["SPY", "QQQ", "XLK", "XLE"])
+        with col2:
+            start_year_etf = st.number_input("📅 기준 연도", 2010, 2025, 2020)
+        with col3:
+            start_q_etf = st.selectbox("🔢 기준 분기", [1, 2, 3, 4], index=0)
+        run_etf_btn = st.button("ETF 수익률 분석 시작", type="primary", use_container_width=True)
+
+    if run_etf_btn and selected_etfs:
+        df_etf = fetch_etf_data(selected_etfs)
+        start_date = f"{start_year_etf}-{str((start_q_etf-1)*3 + 1).zfill(2)}"
+        if any(df_etf.index >= start_date):
+            valid_start = df_etf.index[df_etf.index >= start_date][0]
+            norm_etf = (df_etf.loc[valid_start:] / df_etf.loc[valid_start:].iloc[0] - 1) * 100
+            last_vals = norm_etf.iloc[-1].sort_values(ascending=False)
+            fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
+            vivid_colors = plt.cm.get_cmap('tab10', len(selected_etfs))
+            for i, ticker in enumerate(last_vals.index):
+                lw = 4.0 if ticker in ["SPY", "QQQ"] else 2.5
+                ax.plot(norm_etf.index, norm_etf[ticker], label=f"{ticker} ({last_vals[ticker]:+.1f}%)", color=vivid_colors(i), linewidth=lw)
+            apply_strong_style(ax, f"ETF Performance since {valid_start}", "Return (%)")
+            ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+            ticks = [d for d in norm_etf.index if d.endswith(('-01', '-04', '-07', '-10'))]
+            ax.set_xticks(ticks); ax.set_xticklabels(ticks, rotation=45)
+            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+            st.pyplot(fig)
