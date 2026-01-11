@@ -208,42 +208,120 @@ if main_menu == "개별종목 적정주가 분석 1":
 # --- 메뉴 2: 개별종목 적정주가 분석 2 ---
 elif main_menu == "개별종목 적정주가 분석 2":
     with st.container(border=True):
-        v2_ticker = st.text_input("🏢 분석 티커 입력", "PAYX").upper().strip()
-        run_v2 = st.button("정밀 가치 분석 실행", type="primary", use_container_width=True)
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            v2_ticker = st.text_input("🏢 분석 티커 입력", "PAYX").upper().strip()
+        with col2:
+            st.write("")
+            st.write("")
+            run_v2 = st.button("정밀 가치 분석 실행", type="primary", use_container_width=True)
+
     if run_v2 and v2_ticker:
         try:
-            stock = yf.Ticker(v2_ticker)
-            url = f"https://www.choicestock.co.kr/search/invest/{v2_ticker}/MRQ"
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            dfs = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
-            raw_eps = pd.DataFrame()
-            for df in dfs:
-                if df.iloc[:, 0].astype(str).str.contains('EPS').any():
-                    target_df = df.set_index(df.columns[0])
-                    raw_eps = target_df[target_df.index.str.contains('EPS', na=False)].transpose()
-                    raw_eps.index = pd.to_datetime(raw_eps.index, format='%y.%m.%d', errors='coerce')
-                    raw_eps = raw_eps.dropna().sort_index()
-                    raw_eps.columns = ['EPS']
-                    break
-            price_history = stock.history(start="2017-01-01", interval="1d")
-            price_df = price_history['Close'].copy()
-            if price_df.index.tz is not None: price_df.index = price_df.index.tz_localize(None)
-            current_price = stock.fast_info.get('last_price', price_df.iloc[-1])
-            est = stock.earnings_estimate
-            current_q_est = est['avg'].iloc[0] if est is not None else 0
-            recent_3_actuals = raw_eps['EPS'].iloc[-3:].sum()
-            final_target_eps = recent_3_actuals + current_q_est
-            processed_data = []
-            for i in range(0, len(raw_eps) - 3, 4):
-                group = raw_eps.iloc[i:i+4]
-                eps_sum = group['EPS'].sum()
-                avg_price = price_df[group.index[0]:group.index[-1]].mean()
-                processed_data.append({'year': f"{group.index[0].year}년", 'per': avg_price/eps_sum, 'eps': eps_sum})
-            avg_past_per = np.mean([d['per'] for d in processed_data if d['per'] > 0])
-            st.success(f"[{v2_ticker}] 실시간 주가: ${current_price:.2f} | 평균 PER: {avg_past_per:.1f}x 기반 분석")
-            fair_val = final_target_eps * avg_past_per
-            st.info(f"적정주가 가치: ${fair_val:.2f} (현재가 대비 {((current_price/fair_val)-1)*100:+.1f}%)")
-        except Exception as e: st.error(f"오류: {e}")
+            with st.spinner('데이터를 수집하고 분석 중입니다...'):
+                stock = yf.Ticker(v2_ticker)
+                
+                # 1. 과거 실적 수집
+                url = f"https://www.choicestock.co.kr/search/invest/{v2_ticker}/MRQ"
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                response = requests.get(url, headers=headers)
+                dfs = pd.read_html(io.StringIO(response.text))
+                
+                raw_eps = pd.DataFrame()
+                for df in dfs:
+                    if df.iloc[:, 0].astype(str).str.contains('EPS').any():
+                        target_df = df.set_index(df.columns[0])
+                        raw_eps = target_df[target_df.index.str.contains('EPS', na=False)].transpose()
+                        raw_eps.index = pd.to_datetime(raw_eps.index, format='%y.%m.%d', errors='coerce')
+                        raw_eps = raw_eps.dropna().sort_index()
+                        raw_eps.columns = ['EPS']
+                        if raw_eps.index.tz is not None:
+                            raw_eps.index = raw_eps.index.tz_localize(None)
+                        break
+
+                raw_eps = raw_eps[raw_eps.index >= "2017-01-01"]
+                
+                # 2. 주가 및 예측치 수집
+                price_history = stock.history(start="2017-01-01", interval="1d")
+                price_df = price_history['Close'].copy()
+                if price_df.index.tz is not None:
+                    price_df.index = price_df.index.tz_localize(None)
+                    
+                current_price = stock.fast_info.get('last_price', price_df.iloc[-1])
+                estimates = stock.earnings_estimate
+                current_q_est = estimates['avg'].iloc[0] if estimates is not None else 0
+
+                # 3. 타겟 EPS 계산
+                recent_3_actuals = raw_eps['EPS'].iloc[-3:].sum()
+                final_target_eps = recent_3_actuals + current_q_est
+
+                # 4. 4분기 단위 프로세싱
+                processed_data = []
+                for i in range(0, len(raw_eps) - 3, 4):
+                    group = raw_eps.iloc[i:i+4]
+                    eps_sum = group['EPS'].sum()
+                    start_date, end_date = group.index[0], group.index[-1]
+                    avg_price = price_df[start_date:end_date].mean()
+                    is_last_row = (i + 4 >= len(raw_eps))
+                    
+                    eps_display = f"{eps_sum:.2f}"
+                    if is_last_row:
+                        eps_display = f"{final_target_eps:.2f}(예상)"
+                        eps_sum = final_target_eps
+                    
+                    processed_data.append({
+                        '기준 연도': f"{start_date.year}년",
+                        '4분기 EPS합': eps_display,
+                        '평균 주가': f"${avg_price:.2f}",
+                        '평균 PER': avg_price / eps_sum if eps_sum > 0 else 0,
+                        'EPS_Val': eps_sum
+                    })
+
+                # 5. UI 출력
+                st.subheader(f"🔍 [{v2_ticker}] 발표일 기준 과거 밸류에이션 기록")
+                st.markdown(f"**분석 기준 EPS:** `${final_target_eps:.2f}` (최근 3개 확정 + 1개 예측)")
+                
+                display_list = []
+                past_pers = [d['평균 PER'] for d in processed_data if d['평균 PER'] > 0]
+                avg_past_per = np.mean(past_pers) if past_pers else 0
+
+                for data in processed_data:
+                    fair_price = final_target_eps * data['평균 PER']
+                    diff_pct = ((current_price / fair_price) - 1) * 100
+                    status = "🔴 고평가" if current_price > fair_price else "🔵 저평가"
+                    
+                    display_list.append({
+                        "기준 연도": data['기준 연도'],
+                        "4분기 EPS합": data['4분기 EPS합'],
+                        "평균 주가": data['평균 주가'],
+                        "평균 PER": f"{data['평균 PER']:.1f}x",
+                        "적정주가 가치": f"${fair_price:.2f}",
+                        "현재가 판단": f"{abs(diff_pct):.1f}% {status}"
+                    })
+
+                st.dataframe(
+                    pd.DataFrame(display_list),
+                    use_container_width=False,
+                    width=750,
+                    hide_index=True
+                )
+
+                # 요약 정보
+                current_fair_value = final_target_eps * avg_past_per
+                current_diff = ((current_price / current_fair_value) - 1) * 100
+                c_status = "고평가" if current_price > current_fair_value else "저평가"
+                
+                st.success(f"""
+                **[최종 요약]**
+                * 현재 실시간 주가: **${current_price:.2f}**
+                * 과거 평균 PER(**{avg_past_per:.1f}x**) 기준 적정가: **${current_fair_value:.2f}**
+                * 결과: 현재 주가는 적정가 대비 **{abs(current_diff):.1f}% {c_status}** 상태입니다.
+                """)
+        except Exception as e:
+            st.error(f"분석 중 오류 발생: {e}")
+
+
+
 
 # --- 메뉴 3: 개별종목 적정주가 분석 3 ---
 elif main_menu == "개별종목 적정주가 분석 3":
@@ -384,3 +462,4 @@ else:
         ax.yaxis.set_major_formatter(mtick.PercentFormatter())
         plt.xticks(rotation=45); ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
         st.pyplot(fig)
+
