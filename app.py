@@ -368,7 +368,7 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-# --- 메뉴 3: 개별종목 적정주가 분석 3 (새로 추가 및 수정된 코드) ---
+# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨) ---
 elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -444,8 +444,8 @@ elif main_menu == "개별종목 적정주가 분석 3":
 
                     st.subheader(f"📈 {v3_ticker} PER Trend Analysis")
 
-                    # 그래프 크기 축소 (기존 대비 약 70% 수준인 8.5 x 4.5 적용)
-                    fig, ax = plt.subplots(figsize=(8.5, 4.5), facecolor='white')
+                    # 그래프 크기 축소: 8.5 x 4.5 -> 5.1 x 2.7 (약 60%)
+                    fig, ax = plt.subplots(figsize=(5.1, 2.7), facecolor='white')
                     
                     # 메인 트렌드 선
                     ax.plot(plot_df['Label'], plot_df['PER'], marker='o', color='#34495e', linewidth=2, markersize=6, label='Forward PER Trend')
@@ -462,13 +462,13 @@ elif main_menu == "개별종목 적정주가 분석 3":
                     apply_strong_style(ax, f"PER Valuation Trend (Since {base_year})", "PER Ratio")
                     plt.xticks(rotation=45)
                     
-                    # 범례 위치 및 설명 보강
-                    ax.legend(loc='upper left', fontsize=9, frameon=True, shadow=True)
+                    # 범례 위치 및 배경색 변경 (흰색)
+                    ax.legend(loc='upper left', fontsize=7, frameon=True, shadow=False, facecolor='white', edgecolor='#d3d3d3')
                     
                     # 우측 하단 정보 박스
                     info_text = f"Current Price: ${current_price:.2f}\nMean: {avg_per:.2f}\nMedian: {median_per:.2f}"
                     ax.text(0.97, 0.05, info_text, transform=ax.transAxes, verticalalignment='bottom', horizontalalignment='right', 
-                            fontsize=8, fontweight='bold', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='#d3d3d3'))
+                            fontsize=7, fontweight='bold', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='#d3d3d3'))
                     
                     st.pyplot(fig)
                     
