@@ -158,13 +158,13 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
         with col2:
             start_year = st.number_input("📅 기준 연도", 2010, 2025, 2020)
         with col3:
+            # 미래 예측 옵션의 DEFAULT 값을 None (index=0)으로 수정
             predict_mode = st.radio(
                 "🔮 미래 예측 옵션",
                 ("None", "현재 분기 예측", "다음 분기 예측"),
-                horizontal=True, index=1
+                horizontal=True, index=0
             )
         
-        # 분석 지표 선택 항목 추가
         selected_metric = st.radio(
             "📈 확인할 분석 지표를 선택하세요",
             ("PER 증감률 (%)", "EPS 성장률 (%)"),
@@ -176,7 +176,6 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
     if analyze_btn:
         tickers = [t.strip().upper() for t in ticker_input.replace(',', ' ').split() if t.strip()]
         
-        # 사용자가 선택한 지표에 따라 그래프 출력
         if selected_metric == "PER 증감률 (%)":
             master_per = pd.DataFrame()
             for t in tickers:
@@ -186,7 +185,6 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
                 master_per = master_per[master_per.index >= f"{start_year}-01-01"].sort_index()
                 indexed_per = (master_per / master_per.iloc[0] - 1) * 100
                 
-                # 그래프 크기 80% 조정 (9.6 x 4.8)
                 fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
                 colors = plt.cm.tab10(np.linspace(0, 1, len(tickers)))
                 x_labels = [f"{str(d.year)[2:]}Q{d.quarter}" for d in indexed_per.index]
@@ -206,7 +204,7 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
                 ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, facecolor='white', edgecolor='black', labelcolor='black', fontsize=9)
                 st.pyplot(fig)
         
-        else: # EPS 성장률 (%) 선택 시
+        else: # EPS 성장률 (%)
             all_eps = []
             for t in tickers:
                 df = fetch_eps_data(t, predict_mode)
@@ -216,7 +214,6 @@ if main_menu == "기업 가치 비교 (PER/EPS)":
                 full_idx = sorted(list(set().union(*(d.index for d in all_eps))))
                 filtered_idx = [idx for idx in full_idx if idx >= f"{start_year}-Q1"]
                 
-                # 그래프 크기 80% 조정 (9.6 x 4.8)
                 fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
                 
                 for i, df in enumerate(all_eps):
