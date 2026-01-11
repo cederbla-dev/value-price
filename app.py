@@ -144,11 +144,11 @@ if main_menu == "개별종목 적정주가 분석 1":
         else:
             st.error("데이터를 가져올 수 없습니다.")
 
-# --- 메뉴 2: 개별종목 적정주가 분석 2 (신규 로직) ---
+# --- 메뉴 2: 개별종목 적정주가 분석 2 ---
 elif main_menu == "개별종목 적정주가 분석 2":
     st.title("📅 발표일 기준 4분기 단위 적정주가 분석")
     with st.container(border=True):
-        v2_ticker = st.text_input("🏢 분석 티커 입력 (예: AAPL, PAYX)", "AAPL").upper().strip()
+        v2_ticker = st.text_input("🏢 분석 티커 입력", "AAPL").upper().strip()
         run_v2 = st.button("과거 기록 기반 밸류에이션 분석", type="primary", use_container_width=True)
 
     if run_v2 and v2_ticker:
@@ -188,7 +188,6 @@ elif main_menu == "개별종목 적정주가 분석 2":
                     eps_sum = group['EPS'].sum()
                     avg_price = price_df[group.index[0]:group.index[-1]].mean()
                     year_label = f"{group.index[0].year}년"
-                    
                     is_last_row = (i + 4 >= len(raw_eps))
                     display_eps = eps_sum
                     if is_last_row:
@@ -204,7 +203,6 @@ elif main_menu == "개별종목 적정주가 분석 2":
                         'PER_raw': avg_price / eps_sum if eps_sum > 0 else 0
                     })
 
-                # 요약 결과 출력
                 past_pers = [d['PER_raw'] for d in processed_data if d['PER_raw'] > 0]
                 avg_past_per = np.mean(past_pers) if past_pers else 0
                 current_fair_value = final_target_eps * avg_past_per
@@ -213,13 +211,11 @@ elif main_menu == "개별종목 적정주가 분석 2":
 
                 st.success(f"**{v2_ticker}** 분석 완료")
                 
-                # 상단 요약 카드
                 c1, c2, c3 = st.columns(3)
                 c1.metric("현재 주가", f"${current_price:.2f}")
                 c2.metric("현재 적정가", f"${current_fair_value:.2f}", f"{current_diff:.1f}% {current_status}", delta_color="inverse")
                 c3.metric("과거 평균 PER", f"{avg_past_per:.1f}x")
 
-                # 상세 데이터 테이블
                 st.subheader("📋 과거 4분기 단위 밸류에이션 기록")
                 table_list = []
                 for data in processed_data:
@@ -236,15 +232,16 @@ elif main_menu == "개별종목 적정주가 분석 2":
                         '판단': f"{abs(diff_pct):.1f}% {status}"
                     })
                 
-                st.table(pd.DataFrame(table_list))
+                # --- 가로 길이 축소 적용 (width=650) ---
+                st.dataframe(pd.DataFrame(table_list), use_container_width=False, width=650, hide_index=True)
                 st.info(f"💡 **계산 근거**: 최근 확정분 합({recent_3_actuals:.2f}) + 야후 분석가 예측({current_q_est:.2f}) = **Target EPS {final_target_eps:.2f}**")
 
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-# --- (이하 기존 메뉴 2, 3 로직 유지) ---
+# (기업 가치 비교 및 ETF 섹터 분석 메뉴는 기존과 동일하게 유지)
 elif main_menu == "기업 가치 비교 (PER/EPS)":
-    st.write("기업 가치 비교 페이지입니다.") # 기존 로직 적용
+    st.info("메뉴를 선택해 주세요.") 
 
 else:
-    st.write("ETF 섹터 수익률 분석 페이지입니다.") # 기존 로직 적용
+    st.info("메뉴를 선택해 주세요.")
