@@ -253,7 +253,7 @@ if main_menu == "개별종목 적정주가 분석 1":
         else:
             st.error("데이터를 가져올 수 없습니다.")
 
-# --- 메뉴 2: 개별종목 적정주가 분석 2 (신규 로직) ---
+# --- 메뉴 2: 개별종목 적정주가 분석 2 (테이블 가로 너비 수정됨) ---
 elif main_menu == "개별종목 적정주가 분석 2":
     with st.container(border=True):
         col1, col2 = st.columns([1, 1])
@@ -347,7 +347,13 @@ elif main_menu == "개별종목 적정주가 분석 2":
                         "현재가 판단": f"{abs(diff_pct):.1f}% {status}"
                     })
 
-                st.table(pd.DataFrame(display_list))
+                # 수정 포인트: 가로 길이를 1/2 수준(약 700px)으로 제한
+                st.dataframe(
+                    pd.DataFrame(display_list),
+                    use_container_width=False,
+                    width=750,
+                    hide_index=True
+                )
 
                 # 요약 정보
                 current_fair_value = final_target_eps * avg_past_per
