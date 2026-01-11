@@ -444,13 +444,13 @@ elif main_menu == "개별종목 적정주가 분석 3":
 
                     st.subheader(f"📈 {v3_ticker} PER Trend Analysis")
 
-                    # 그래프 크기 축소: 8.5 x 4.5 -> 5.1 x 2.7 (약 60%)
-                    fig, ax = plt.subplots(figsize=(5.1, 2.7), facecolor='white')
+                    # 수정 사항 1: 그래프 크기 축소 (기존 대비 약 70% 수준인 8.0 x 4.0 적용)
+                    fig, ax = plt.subplots(figsize=(8.0, 4.0), facecolor='white')
                     
                     # 메인 트렌드 선
                     ax.plot(plot_df['Label'], plot_df['PER'], marker='o', color='#34495e', linewidth=2, markersize=6, label='Forward PER Trend')
                     
-                    # 평균 및 중위값 선 추가 (범례 포함)
+                    # 평균 및 중위값 선 추가
                     ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, label=f'Mean (평균값): {avg_per:.2f}')
                     ax.axhline(median_per, color='#8e44ad', linestyle='-.', linewidth=1.5, label=f'Median (중위값): {median_per:.2f}')
                     
@@ -462,13 +462,18 @@ elif main_menu == "개별종목 적정주가 분석 3":
                     apply_strong_style(ax, f"PER Valuation Trend (Since {base_year})", "PER Ratio")
                     plt.xticks(rotation=45)
                     
-                    # 범례 위치 및 배경색 변경 (흰색)
-                    ax.legend(loc='upper left', fontsize=7, frameon=True, shadow=False, facecolor='white', edgecolor='#d3d3d3')
+                    # 수정 사항 2: 좌측 상단 범례(사각형) 흰색 배경 + 검은색 글자
+                    leg = ax.legend(loc='upper left', fontsize=9, frameon=True, shadow=False)
+                    leg.get_frame().set_facecolor('white') # 흰색 배경
+                    leg.get_frame().set_edgecolor('black') # 테두리 (선택적)
+                    for text in leg.get_texts():
+                        text.set_color("black") # 글자색 검정
                     
                     # 우측 하단 정보 박스
                     info_text = f"Current Price: ${current_price:.2f}\nMean: {avg_per:.2f}\nMedian: {median_per:.2f}"
                     ax.text(0.97, 0.05, info_text, transform=ax.transAxes, verticalalignment='bottom', horizontalalignment='right', 
-                            fontsize=7, fontweight='bold', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='#d3d3d3'))
+                            fontsize=8, fontweight='bold', color='black',
+                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#d3d3d3'))
                     
                     st.pyplot(fig)
                     
