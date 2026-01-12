@@ -306,21 +306,18 @@ if main_menu == "개별종목 적정주가 분석 1":
             else:
                 st.error("데이터를 수집하지 못했습니다. 티커 입력이 정확한지 확인해 주세요.")
 
-
 # --- 메뉴 2: 개별종목 적정주가 분석 2 ---
 elif main_menu == "개별종목 적정주가 분석 2":
     with st.container(border=True):
-        # col1, col2의 비율을 조절하고 뒤에 빈 컬럼(col3)을 추가하여 전체 넓이의 50%만 사용하도록 수정
-        col1, col2, col3 = st.columns([0.5, 0.5, 1])
+        # vertical_alignment="bottom"을 추가하여 입력창과 버튼의 높이를 정렬합니다.
+        col1, col2, col3 = st.columns([0.5, 0.5, 1], vertical_alignment="bottom")
         with col1:
             v2_ticker = st.text_input("🏢 분석 티커 입력", "PAYX").upper().strip()
         with col2:
-            st.write("")
-            st.write("")
-            # 버튼 문구를 '당해 EPS 기반 분석'으로 수정
+            # 기존의 st.write("") 공백 제거 후 버튼 배치
             run_v2 = st.button("당해 EPS 기반 분석", type="primary", use_container_width=True)
         with col3:
-            # 넓이 조절을 위한 빈 공간
+            # 우측 50% 공간 비워둠
             pass
 
     if run_v2 and v2_ticker:
