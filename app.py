@@ -181,7 +181,7 @@ with st.sidebar:
 
 st.title(f"🚀 {main_menu}")
 
-# --- 메뉴 1: 개별종목 적정주가 분석 1 (범례 커스텀 및 왼쪽 정렬 버전) ---
+# --- 메뉴 1: 개별종목 적정주가 분석 1 (범례 배경색 및 정렬 최종 수정본) ---
 if main_menu == "개별종목 적정주가 분석 1":
     # 1. 상단 입력 UI 레이아웃
     with st.container(border=True):
@@ -222,7 +222,7 @@ if main_menu == "개별종목 적정주가 분석 1":
                     gap_pct = ((final_price - last_fair_value) / last_fair_value) * 100
                     status = "🔴 고평가" if gap_pct > 0 else "🔵 저평가"
 
-                    # 표 데이터 저장
+                    # 표 데이터 저장용 리스트업
                     summary_list.append({
                         "기준 연도": f"{base_year}년",
                         "기준 PER": f"{scale_factor:.1f}x",
@@ -232,27 +232,36 @@ if main_menu == "개별종목 적정주가 분석 1":
                         "상태": status
                     })
 
-                    # 그래프 시각화 (Size 조절)
+                    # 그래프 시각화 설정
                     fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
                     
                     # 1. Price 라인 (파란색)
-                    line1, = ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', 
-                                     linewidth=2.0, marker='o', markersize=4, label='Price')
-                    # 2. EPS Value 라인 (빨간색)
-                    line2, = ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', 
-                                     linestyle='--', marker='s', markersize=4, label='EPS')
+                    ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', 
+                            linewidth=2.0, marker='o', markersize=4, label='Price')
+                    # 2. EPS 가치 라인 (빨간색)
+                    ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', 
+                            linestyle='--', marker='s', markersize=4, label='EPS')
                     
                     # 미래 예측(Est.) 구간 하이라이트
                     for i, idx in enumerate(df_plot.index):
                         if "(Est.)" in str(idx):
                             ax.axvspan(i-0.5, i+0.5, color='orange', alpha=0.1)
 
-                    # 스타일 적용 (기존 apply_strong_style 함수 호출)
+                    # 스타일 적용 (기존 apply_strong_style 함수)
                     apply_strong_style(ax, f"Base Year: {base_year} (Gap: {gap_pct:+.1f}%)", "Price ($)")
                     plt.xticks(rotation=45)
                     
-                    # --- [핵심 수정] 범례 글자색을 그래프 색상과 일치시키기 ---
-                    leg = ax.legend(loc='upper left', fontsize=11, frameon=True, shadow=True)
+                    # --- [범례 커스텀 수정] 배경 흰색 및 글자색 지정 ---
+                    leg = ax.legend(
+                        loc='upper left', 
+                        fontsize=11, 
+                        frameon=True, 
+                        facecolor='white',  # 범례 내부 배경색 흰색
+                        edgecolor='black',  # 범례 테두리색 검정
+                        framealpha=1.0      # 투명도 없음 (불투명 흰색)
+                    )
+                    
+                    # 범례 내 텍스트 색상 및 굵기 개별 설정
                     for text in leg.get_texts():
                         if text.get_text() == 'Price':
                             text.set_color('#1f77b4')  # 파란색 글씨
@@ -273,7 +282,7 @@ if main_menu == "개별종목 적정주가 분석 1":
 
                     summary_df = pd.DataFrame(summary_list)
 
-                    # 왼쪽 정렬을 위해 6:4 비율로 컬럼을 나눔 (60% 지점까지만 표 표시)
+                    # 표의 시작점을 그래프의 왼쪽 끝과 맞추기 위해 6:4 비율 컬럼 사용
                     main_col, _ = st.columns([6, 4]) 
                     
                     with main_col:
@@ -291,11 +300,11 @@ if main_menu == "개별종목 적정주가 분석 1":
                             }
                         )
                     
-                    st.info(f"💡 **분석 가이드**: '저평가'가 많을수록 현재 주가가 역사적 저점 부근일 가능성이 높습니다.")
+                    st.info(f"💡 **분석 가이드**: 다수의 기준 연도 대비 '저평가'가 많다면 현재 주가는 매력적인 구간일 확률이 높습니다.")
                 else:
                     st.warning("분석 가능한 흑자(EPS > 0) 데이터가 부족합니다.")
             else:
-                st.error("데이터를 불러오지 못했습니다. 티커와 통신 상태를 확인하세요.")
+                st.error("데이터를 수집하지 못했습니다. 티커 입력이 정확한지 확인해 주세요.")
 
 # --- 메뉴 2: 개별종목 적정주가 분석 2 ---
 elif main_menu == "개별종목 적정주가 분석 2":
