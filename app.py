@@ -574,4 +574,27 @@ elif main_menu == "개별종목 적정주가 분석 4":
                                         '분석 기간': f"최근 {y}년",
                                         '과거 TTM': past_ttm,
                                         '현재 TTM': current_ttm,
-                                        '성장률(
+                                        '성장률(%)': round(growth, 2),
+                                        'PER': round(per_val, 2),
+                                        'PEG': round(peg, 2)
+                                    })
+                    
+                    if results:
+                        st.subheader(f"📊 {v4_ticker} 연도별 PEG 분석 결과")
+                        st.dataframe(pd.DataFrame(results), use_container_width=True)
+                    else:
+                        st.warning("분석에 필요한 과거 데이터가 충분하지 않거나 적자 기업입니다.")
+
+        except Exception as e:
+            st.error(f"분석 중 오류가 발생했습니다: {e}")
+
+# --- (본문 코드가 없으므로 메뉴 선택 시 에러 방지용) ---
+elif main_menu == "기업 가치 비교 (PER/EPS)":
+    st.info("이 메뉴의 기능은 현재 코드에 포함되어 있지 않습니다.")
+elif main_menu == "ETF 섹터 수익률 분석":
+    st.info("이 메뉴의 기능은 현재 코드에 포함되어 있지 않습니다.")
+
+# --- [추가된 메뉴] 개별종목 적정주가 분석 5 ---
+elif main_menu == "개별종목 적정주가 분석 5":
+    st.header("🔍 개별종목 적정주가 분석 5")
+    st.warning("🚧 준비 중인 메뉴입니다. 본문 내용은 추후 업데이트될 예정입니다.")
