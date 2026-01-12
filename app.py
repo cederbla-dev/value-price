@@ -538,25 +538,6 @@ elif main_menu == "개별종목 적정주가 분석 3":
                 else: st.warning("데이터 수집 실패")
         except Exception as e: st.error(f"오류: {e}")
 
-import streamlit as st
-import pandas as pd
-import yfinance as yf
-import requests
-import io
-from datetime import datetime
-
-# --- 유틸리티 함수: 성장률 및 PEG 계산 ---
-def calculate_growth_and_peg(price, curr_eps, past_eps, years):
-    try:
-        if past_eps <= 0 or curr_eps <= 0: # 적자 기업 처리
-            return 0, 0, 0
-        growth = ((curr_eps / past_eps) ** (1 / years) - 1) * 100
-        per = price / curr_eps
-        peg = per / growth if growth > 0 else 0
-        return growth, per, peg
-    except:
-        return 0, 0, 0
-
 # --- 메뉴 4: 개별종목 적정주가 분석 4 ---
 elif main_menu == "개별종목 적정주가 분석 4":
     with st.container(border=True):
