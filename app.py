@@ -446,9 +446,12 @@ elif main_menu == "개별종목 적정주가 분석 3":
                 per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
                 per_series = pd.to_numeric(per_raw.iloc[:, 0], errors='coerce').dropna()
                 per_series.index = pd.to_datetime(per_series.index, format='%y.%m.%d')
+                
+                # [수정] 데이터를 과거 -> 미래 순으로 정렬 (그래프 방향 오류 해결)
+                per_series = per_series.sort_index()
                 per_series = per_series[per_series.index >= f"{base_year}-01-01"]
                 
-                # 데이터 통계 및 X축 설정
+                # 데이터 통계치 계산
                 avg_per = per_series.mean()
                 max_per = per_series.max()
                 min_per = per_series.min()
@@ -457,31 +460,32 @@ elif main_menu == "개별종목 적정주가 분석 3":
                 fig, ax = plt.subplots(figsize=(10.0, 5.0), facecolor='white')
                 
                 # 1. PER 선 그래프
-                ax.plot(x_labels, per_series.values, marker='o', color='#34495e', linewidth=2)
+                ax.plot(x_labels, per_series.values, marker='o', color='#34495e', linewidth=2, zorder=3)
                 
-                # 2. 평균값 점선
-                ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5)
+                # 2. 평균값(Middle) 점선
+                ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, zorder=2)
                 
-                # 3. Y축 범위 조정 (평균이 중앙에 오도록)
-                half_range = max(max_per - avg_per, avg_per - min_per) * 1.3
+                # 3. Y축 범위 조정 (평균이 정확히 중앙에 오도록)
+                half_range = max(max_per - avg_per, avg_per - min_per) * 1.4
                 ax.set_ylim(avg_per - half_range, avg_per + half_range)
 
-                # 4. 좌측 상단 텍스트 설명 (Legend 대신 직접 텍스트 입력)
-                # transform=ax.transAxes를 사용하여 그래프 내 좌표가 아닌 비율(0~1)로 배치
-                ax.text(0.02, 0.95, "■ PER", color='#34495e', fontweight='bold', transform=ax.transAxes, fontsize=10, va='top')
-                ax.text(0.02, 0.90, "--- Middle", color='#e74c3c', fontweight='bold', transform=ax.transAxes, fontsize=10, va='top')
+                # 4. 좌측 상단 텍스트 설명 (요청하신 색상 및 문구 적용)
+                # ax.transAxes를 사용하여 그래프 크기에 상관없이 좌측 상단에 고정
+                ax.text(0.02, 0.95, "PER", color='#34495e', fontweight='bold', transform=ax.transAxes, fontsize=11, va='top')
+                ax.text(0.02, 0.88, "Middle", color='#e74c3c', fontweight='bold', transform=ax.transAxes, fontsize=11, va='top')
 
-                # 5. 미래 예측 옵션에 따른 배경색 채우기
+                # 5. 미래 예측 옵션 시 노란색 배경 채우기
                 if v3_predict_mode != "None":
-                    # 마지막 2개 구간 정도를 예측 구간으로 가정하여 노란색 배경 강조
-                    # 데이터의 마지막 인덱스 부근을 강조 (일반적으로 오른쪽 끝)
-                    ax.axvspan(len(x_labels)-1.5, len(x_labels)-0.5, color='yellow', alpha=0.2, label="Prediction")
-                    ax.text(len(x_labels)-1, ax.get_ylim()[1]*0.95, "Forecast", color='orange', fontsize=9, ha='center')
+                    # 마지막 데이터 포인트부터 오른쪽 여백 끝까지 옅은 노란색 채우기
+                    # x축의 마지막 인덱스를 기준으로 영역 설정
+                    ax.axvspan(len(x_labels)-1, len(x_labels), color='#fff9c4', alpha=0.5, zorder=1)
+                    # 예측 구간 텍스트 표시
+                    ax.text(len(x_labels)-0.5, ax.get_ylim()[1]*0.85, "Forecast", 
+                            color='#fbc02d', fontsize=10, ha='center', fontweight='bold')
 
                 apply_strong_style(ax, f"{v3_ticker} PER Valuation Trend", "PER Ratio")
                 plt.xticks(rotation=45)
                 
-                # 불필요해진 범례는 숨김 처리하고 깔끔하게 출력
                 st.pyplot(fig)
             else:
                 st.warning("PER 데이터를 찾을 수 없습니다.")
