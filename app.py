@@ -424,7 +424,6 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-
 # --- 메뉴 3: 개별종목 적정주가 분석 3 ---
 elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
@@ -449,37 +448,47 @@ elif main_menu == "개별종목 적정주가 분석 3":
                 per_series.index = pd.to_datetime(per_series.index, format='%y.%m.%d')
                 per_series = per_series[per_series.index >= f"{base_year}-01-01"]
                 
-                # 데이터 통계치 계산
+                # 데이터 통계 및 X축 설정
                 avg_per = per_series.mean()
                 max_per = per_series.max()
                 min_per = per_series.min()
+                x_labels = per_series.index.strftime('%y.%m')
                 
-                fig, ax = plt.subplots(figsize=(8.0, 4.0), facecolor='white')
+                fig, ax = plt.subplots(figsize=(10.0, 5.0), facecolor='white')
                 
-                # 1. PER 선 그래프 (검은색 계열) - 라벨을 'PER'로 수정
-                ax.plot(per_series.index.strftime('%y.%m'), per_series.values, 
-                        marker='o', color='#34495e', linewidth=2, label='PER')
+                # 1. PER 선 그래프
+                ax.plot(x_labels, per_series.values, marker='o', color='#34495e', linewidth=2)
                 
-                # 2. 평균값 점선 (빨간색) - 라벨을 'Median'으로 수정 (통계상 mean이나 요청에 따라 Median으로 표기)
-                ax.axhline(avg_per, color='#e74c3c', linestyle='--', label=f'Median: {avg_per:.1f}')
+                # 2. 평균값 점선
+                ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5)
                 
-                # 3. Y축 범위 조정: 평균값이 중앙에 오도록 설정
-                # 데이터의 퍼짐 정도(range)를 계산하여 상하 대칭으로 범위를 잡음
-                half_range = max(max_per - avg_per, avg_per - min_per) * 1.2  # 20% 여유 공간
+                # 3. Y축 범위 조정 (평균이 중앙에 오도록)
+                half_range = max(max_per - avg_per, avg_per - min_per) * 1.3
                 ax.set_ylim(avg_per - half_range, avg_per + half_range)
-                
+
+                # 4. 좌측 상단 텍스트 설명 (Legend 대신 직접 텍스트 입력)
+                # transform=ax.transAxes를 사용하여 그래프 내 좌표가 아닌 비율(0~1)로 배치
+                ax.text(0.02, 0.95, "■ PER", color='#34495e', fontweight='bold', transform=ax.transAxes, fontsize=10, va='top')
+                ax.text(0.02, 0.90, "--- Middle", color='#e74c3c', fontweight='bold', transform=ax.transAxes, fontsize=10, va='top')
+
+                # 5. 미래 예측 옵션에 따른 배경색 채우기
+                if v3_predict_mode != "None":
+                    # 마지막 2개 구간 정도를 예측 구간으로 가정하여 노란색 배경 강조
+                    # 데이터의 마지막 인덱스 부근을 강조 (일반적으로 오른쪽 끝)
+                    ax.axvspan(len(x_labels)-1.5, len(x_labels)-0.5, color='yellow', alpha=0.2, label="Prediction")
+                    ax.text(len(x_labels)-1, ax.get_ylim()[1]*0.95, "Forecast", color='orange', fontsize=9, ha='center')
+
                 apply_strong_style(ax, f"{v3_ticker} PER Valuation Trend", "PER Ratio")
                 plt.xticks(rotation=45)
                 
-                # 범례 설정 (좌측 상단)
-                ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black')
-                
+                # 불필요해진 범례는 숨김 처리하고 깔끔하게 출력
                 st.pyplot(fig)
             else:
                 st.warning("PER 데이터를 찾을 수 없습니다.")
                 
         except Exception as e: 
             st.error(f"오류: {e}")
+
 
 # --- 메뉴 4: 개별종목 적정주가 분석 4 (테이블 너비 20% 확대: 550) ---
 elif main_menu == "개별종목 적정주가 분석 4":
