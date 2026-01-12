@@ -181,7 +181,7 @@ with st.sidebar:
 
 st.title(f"🚀 {main_menu}")
 
-# --- 메뉴 1: 개별종목 적정주가 분석 1 (범례 수정 및 왼쪽 정렬 버전) ---
+# --- 메뉴 1: 개별종목 적정주가 분석 1 (범례 커스텀 및 왼쪽 정렬 버전) ---
 if main_menu == "개별종목 적정주가 분석 1":
     # 1. 상단 입력 UI 레이아웃
     with st.container(border=True):
@@ -196,8 +196,8 @@ if main_menu == "개별종목 적정주가 분석 1":
         run_val = st.button("적정주가 분석 실행", type="primary", use_container_width=True)
 
     if run_val and val_ticker:
-        with st.spinner(f"[{val_ticker}] 데이터를 분석 중입니다..."):
-            # 데이터 가져오기
+        with st.spinner(f"[{val_ticker}] 데이터를 정밀 분석 중입니다..."):
+            # 데이터 가져오기 (기존 정의된 fetch_valuation_data 함수 호출)
             combined = fetch_valuation_data(val_ticker, val_predict_mode)
             
             if combined is not None and not combined.empty:
@@ -214,7 +214,7 @@ if main_menu == "개별종목 적정주가 분석 1":
                     if len(df_plot) < 2 or df_plot.iloc[0]['EPS'] <= 0:
                         continue
                     
-                    # 기준 PER 산출 및 적정가 계산
+                    # 기준 PER 산출 및 적정가(Fair Value) 계산
                     scale_factor = df_plot.iloc[0]['Close'] / df_plot.iloc[0]['EPS']
                     df_plot['Fair_Value'] = df_plot['EPS'] * scale_factor
                     
@@ -222,6 +222,7 @@ if main_menu == "개별종목 적정주가 분석 1":
                     gap_pct = ((final_price - last_fair_value) / last_fair_value) * 100
                     status = "🔴 고평가" if gap_pct > 0 else "🔵 저평가"
 
+                    # 표 데이터 저장
                     summary_list.append({
                         "기준 연도": f"{base_year}년",
                         "기준 PER": f"{scale_factor:.1f}x",
@@ -231,30 +232,39 @@ if main_menu == "개별종목 적정주가 분석 1":
                         "상태": status
                     })
 
-                    # 그래프 시각화
+                    # 그래프 시각화 (Size 조절)
                     fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
                     
-                    # 라벨 명시: Price 및 EPS(Fair Value)
-                    ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', linewidth=2.0, 
-                            marker='o', markersize=4, label='Price')
-                    ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', linestyle='--', 
-                            marker='s', markersize=4, label='EPS Value')
+                    # 1. Price 라인 (파란색)
+                    line1, = ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', 
+                                     linewidth=2.0, marker='o', markersize=4, label='Price')
+                    # 2. EPS Value 라인 (빨간색)
+                    line2, = ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', 
+                                     linestyle='--', marker='s', markersize=4, label='EPS')
                     
-                    # 예측 구간 하이라이트
+                    # 미래 예측(Est.) 구간 하이라이트
                     for i, idx in enumerate(df_plot.index):
                         if "(Est.)" in str(idx):
                             ax.axvspan(i-0.5, i+0.5, color='orange', alpha=0.1)
 
+                    # 스타일 적용 (기존 apply_strong_style 함수 호출)
                     apply_strong_style(ax, f"Base Year: {base_year} (Gap: {gap_pct:+.1f}%)", "Price ($)")
                     plt.xticks(rotation=45)
                     
-                    # 범례 표시 보강 (그래프 좌측 상단에 표시)
-                    ax.legend(loc='upper left', fontsize=10, frameon=True, facecolor='white')
+                    # --- [핵심 수정] 범례 글자색을 그래프 색상과 일치시키기 ---
+                    leg = ax.legend(loc='upper left', fontsize=11, frameon=True, shadow=True)
+                    for text in leg.get_texts():
+                        if text.get_text() == 'Price':
+                            text.set_color('#1f77b4')  # 파란색 글씨
+                            text.set_weight('bold')
+                        elif text.get_text() == 'EPS':
+                            text.set_color('#d62728')  # 빨간색 글씨
+                            text.set_weight('bold')
                     
                     st.pyplot(fig)
                     plt.close(fig)
 
-                # --- 파트 B: 최종 요약 표 출력 (왼쪽 정렬 및 너비 조정) ---
+                # --- 파트 B: 최종 요약 표 출력 (60% 너비 및 왼쪽 정렬) ---
                 if summary_list:
                     st.write("\n")
                     st.markdown("---")
@@ -263,7 +273,7 @@ if main_menu == "개별종목 적정주가 분석 1":
 
                     summary_df = pd.DataFrame(summary_list)
 
-                    # 요청하신 대로 왼쪽 정렬을 위해 컬럼을 60% 비율로 하나만 생성
+                    # 왼쪽 정렬을 위해 6:4 비율로 컬럼을 나눔 (60% 지점까지만 표 표시)
                     main_col, _ = st.columns([6, 4]) 
                     
                     with main_col:
@@ -281,11 +291,11 @@ if main_menu == "개별종목 적정주가 분석 1":
                             }
                         )
                     
-                    st.info(f"💡 **분석 가이드**: 다양한 기준 연도 중 '저평가' 상태가 압도적으로 많다면, 현재 주가는 역사적 저평가 영역에 있을 확률이 높습니다.")
+                    st.info(f"💡 **분석 가이드**: '저평가'가 많을수록 현재 주가가 역사적 저점 부근일 가능성이 높습니다.")
                 else:
-                    st.warning("분석 가능한 흑자 데이터가 부족합니다.")
+                    st.warning("분석 가능한 흑자(EPS > 0) 데이터가 부족합니다.")
             else:
-                st.error("데이터를 가져오는 데 실패했습니다.")
+                st.error("데이터를 불러오지 못했습니다. 티커와 통신 상태를 확인하세요.")
 
 # --- 메뉴 2: 개별종목 적정주가 분석 2 ---
 elif main_menu == "개별종목 적정주가 분석 2":
