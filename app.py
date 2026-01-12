@@ -306,115 +306,123 @@ if main_menu == "개별종목 적정주가 분석 1":
             else:
                 st.error("데이터를 수집하지 못했습니다. 티커 입력이 정확한지 확인해 주세요.")
 
-# --- 메뉴 2: 개별종목 적정주가 분석 2 (UI 비율 및 버튼명 수정 버전) ---
-if main_menu == "개별종목 적정주가 분석 2":
-    # 1. 상단 입력 UI 레이아웃 (전체 너비의 50%씩 배분하여 왼쪽 정렬)
+# --- 메뉴 2: 개별종목 적정주가 분석 2 ---
+elif main_menu == "개별종목 적정주가 분석 2":
     with st.container(border=True):
-        # 입력창과 버튼을 묶어서 왼쪽으로 배치하기 위해 5:5 비율의 컬럼 생성
-        col1, col2 = st.columns([1, 1])  
-        
+        col1, col2 = st.columns([1, 1])
         with col1:
-            val_ticker_2 = st.text_input("🏢 분석 티커 입력", "TSLA", key="ticker_2").upper().strip()
-        
+            v2_ticker = st.text_input("🏢 분석 티커 입력", "PAYX").upper().strip()
         with col2:
-            # 입력창의 라벨 높이만큼 공간을 띄워 버튼과 입력창의 높이를 맞춤
-            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
-            run_val_2 = st.button("당해 EPS 기반 가치 분석", type="primary", use_container_width=True)
+            st.write("")
+            st.write("")
+            run_v2 = st.button("정밀 가치 분석 실행", type="primary", use_container_width=True)
 
-    if run_val_2 and val_ticker_2:
-        with st.spinner(f"[{val_ticker_2}] 당해 실적 기반 정밀 가치 분석을 진행 중입니다..."):
-            # 데이터 수집 (기존 정의된 fetch_valuation_data 활용, 예측 옵션은 기본값)
-            combined = fetch_valuation_data(val_ticker_2, "None")
-            
-            if combined is not None and not combined.empty:
-                # 당해(가장 최근 확정 실적 시점) 데이터 추출
-                final_price = combined['Close'].iloc[-1]
-                target_date_label = combined.index[-1]
+    if run_v2 and v2_ticker:
+        try:
+            with st.spinner('데이터를 수집하고 분석 중입니다...'):
+                stock = yf.Ticker(v2_ticker)
                 
-                # 분석을 위한 리스트 (메뉴 1과 동일한 로직의 요약 데이터 생성)
-                summary_list_2 = []
-
-                # --- 파트 A: 시각화 로직 ---
-                st.subheader(f"📊 {val_ticker_2} 당해 EPS 기반 적정주가 분석")
+                # 1. 과거 실적 수집
+                url = f"https://www.choicestock.co.kr/search/invest/{v2_ticker}/MRQ"
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                response = requests.get(url, headers=headers)
+                dfs = pd.read_html(io.StringIO(response.text))
                 
-                # 역사적 기준점들을 순회하며 당해 가격과 비교
-                for base_year in range(2017, 2026):
-                    df_plot = combined[combined.index >= f'{base_year}-01'].copy()
-                    
-                    if len(df_plot) < 2 or df_plot.iloc[0]['EPS'] <= 0:
-                        continue
-                    
-                    # 기준 PER 산출 및 적정가 계산
-                    scale_factor = df_plot.iloc[0]['Close'] / df_plot.iloc[0]['EPS']
-                    df_plot['Fair_Value'] = df_plot['EPS'] * scale_factor
-                    
-                    last_fair_value = df_plot.iloc[-1]['Fair_Value']
-                    gap_pct = ((final_price - last_fair_value) / last_fair_value) * 100
-                    status = "🔴 고평가" if gap_pct > 0 else "🔵 저평가"
+                raw_eps = pd.DataFrame()
+                for df in dfs:
+                    if df.iloc[:, 0].astype(str).str.contains('EPS').any():
+                        target_df = df.set_index(df.columns[0])
+                        raw_eps = target_df[target_df.index.str.contains('EPS', na=False)].transpose()
+                        raw_eps.index = pd.to_datetime(raw_eps.index, format='%y.%m.%d', errors='coerce')
+                        raw_eps = raw_eps.dropna().sort_index()
+                        raw_eps.columns = ['EPS']
+                        if raw_eps.index.tz is not None:
+                            raw_eps.index = raw_eps.index.tz_localize(None)
+                        break
 
-                    summary_list_2.append({
-                        "기준 연도": f"{base_year}년",
-                        "기준 PER": f"{scale_factor:.1f}x",
-                        "적정 주가": f"${last_fair_value:.2f}",
-                        "현재 주가": f"${final_price:.2f}",
-                        "괴리율 (%)": f"{gap_pct:+.1f}%",
-                        "상태": status
+                raw_eps = raw_eps[raw_eps.index >= "2017-01-01"]
+                
+                # 2. 주가 및 예측치 수집
+                price_history = stock.history(start="2017-01-01", interval="1d")
+                price_df = price_history['Close'].copy()
+                if price_df.index.tz is not None:
+                    price_df.index = price_df.index.tz_localize(None)
+                    
+                current_price = stock.fast_info.get('last_price', price_df.iloc[-1])
+                estimates = stock.earnings_estimate
+                current_q_est = estimates['avg'].iloc[0] if estimates is not None else 0
+
+                # 3. 타겟 EPS 계산
+                recent_3_actuals = raw_eps['EPS'].iloc[-3:].sum()
+                final_target_eps = recent_3_actuals + current_q_est
+
+                # 4. 4분기 단위 프로세싱
+                processed_data = []
+                for i in range(0, len(raw_eps) - 3, 4):
+                    group = raw_eps.iloc[i:i+4]
+                    eps_sum = group['EPS'].sum()
+                    start_date, end_date = group.index[0], group.index[-1]
+                    avg_price = price_df[start_date:end_date].mean()
+                    is_last_row = (i + 4 >= len(raw_eps))
+                    
+                    eps_display = f"{eps_sum:.2f}"
+                    if is_last_row:
+                        eps_display = f"{final_target_eps:.2f}(예상)"
+                        eps_sum = final_target_eps
+                    
+                    processed_data.append({
+                        '기준 연도': f"{start_date.year}년",
+                        '4분기 EPS합': eps_display,
+                        '평균 주가': f"${avg_price:.2f}",
+                        '평균 PER': avg_price / eps_sum if eps_sum > 0 else 0,
+                        'EPS_Val': eps_sum
                     })
 
-                    # 그래프 시각화 (범례 및 스타일 적용)
-                    fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
-                    
-                    ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', 
-                            linewidth=2.0, marker='o', markersize=4, label='Price')
-                    ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', 
-                            linestyle='--', marker='s', markersize=4, label='EPS')
+                # 5. UI 출력
+                st.subheader(f"🔍 [{v2_ticker}] 발표일 기준 과거 밸류에이션 기록")
+                st.markdown(f"**분석 기준 EPS:** `${final_target_eps:.2f}` (최근 3개 확정 + 1개 예측)")
+                
+                display_list = []
+                past_pers = [d['평균 PER'] for d in processed_data if d['평균 PER'] > 0]
+                avg_past_per = np.mean(past_pers) if past_pers else 0
 
-                    apply_strong_style(ax, f"Base Year: {base_year} (Gap: {gap_pct:+.1f}%)", "Price ($)")
-                    plt.xticks(rotation=45)
+                for data in processed_data:
+                    fair_price = final_target_eps * data['평균 PER']
+                    diff_pct = ((current_price / fair_price) - 1) * 100
+                    status = "🔴 고평가" if current_price > fair_price else "🔵 저평가"
                     
-                    # 범례 설정 (흰색 배경 및 커스텀 색상)
-                    leg = ax.legend(loc='upper left', fontsize=11, frameon=True, facecolor='white', edgecolor='black', framealpha=1.0)
-                    for text in leg.get_texts():
-                        if text.get_text() == 'Price':
-                            text.set_color('#1f77b4')
-                            text.set_weight('bold')
-                        elif text.get_text() == 'EPS':
-                            text.set_color('#d62728')
-                            text.set_weight('bold')
-                    
-                    st.pyplot(fig)
-                    plt.close(fig)
+                    display_list.append({
+                        "기준 연도": data['기준 연도'],
+                        "4분기 EPS합": data['4분기 EPS합'],
+                        "평균 주가": data['평균 주가'],
+                        "평균 PER": f"{data['평균 PER']:.1f}x",
+                        "적정주가 가치": f"${fair_price:.2f}",
+                        "현재가 판단": f"{abs(diff_pct):.1f}% {status}"
+                    })
 
-                # --- 파트 B: 최종 요약 표 출력 (60% 너비, 왼쪽 정렬) ---
-                if summary_list_2:
-                    st.write("\n")
-                    st.markdown("---")
-                    st.subheader(f"📋 {val_ticker_2} 가치 분석 요약")
-                    
-                    summary_df_2 = pd.DataFrame(summary_list_2)
-                    
-                    # 왼쪽 정렬을 위한 6:4 비율 컬럼
-                    main_col_2, _ = st.columns([6, 4]) 
-                    
-                    with main_col_2:
-                        st.dataframe(
-                            summary_df_2,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "기준 연도": st.column_config.TextColumn("기준 연도"),
-                                "기준 PER": st.column_config.TextColumn("기준 PER"),
-                                "적정 주가": st.column_config.TextColumn("적정 주가"),
-                                "현재 주가": st.column_config.TextColumn("현재 주가"),
-                                "괴리율 (%)": st.column_config.TextColumn("괴리율 (%)"),
-                                "상태": st.column_config.TextColumn("상태"),
-                            }
-                        )
-                    st.info("💡 본 분석은 당해 확정 실적(EPS)만을 기준으로 산출된 보수적 가치 평가 결과입니다.")
-                else:
-                    st.warning("분석 가능한 충분한 데이터가 확보되지 않았습니다.")
-            else:
-                st.error("데이터 수집에 실패했습니다. 티커명을 확인해 주세요.")
+                st.dataframe(
+                    pd.DataFrame(display_list),
+                    use_container_width=False,
+                    width=750,
+                    hide_index=True
+                )
+
+                # 요약 정보
+                current_fair_value = final_target_eps * avg_past_per
+                current_diff = ((current_price / current_fair_value) - 1) * 100
+                c_status = "고평가" if current_price > current_fair_value else "저평가"
+                
+                st.success(f"""
+                **[최종 요약]**
+                * 현재 실시간 주가: **${current_price:.2f}**
+                * 과거 평균 PER(**{avg_past_per:.1f}x**) 기준 적정가: **${current_fair_value:.2f}**
+                * 결과: 현재 주가는 적정가 대비 **{abs(current_diff):.1f}% {c_status}** 상태입니다.
+                """)
+        except Exception as e:
+            st.error(f"분석 중 오류 발생: {e}")
+
+
+
 
 # --- 메뉴 3: 개별종목 적정주가 분석 3 ---
 elif main_menu == "개별종목 적정주가 분석 3":
