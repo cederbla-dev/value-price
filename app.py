@@ -433,25 +433,53 @@ elif main_menu == "개별종목 적정주가 분석 3":
         base_year = col2.slider("📅 차트 시작 연도", 2017, 2025, 2017)
         v3_predict_mode = col3.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True)
         run_v3 = st.button("PER Trend 분석 실행", type="primary", use_container_width=True)
+        
     if run_v3 and v3_ticker:
         try:
             url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
             headers = {'User-Agent': 'Mozilla/5.0'}
-            dfs = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
+            response = requests.get(url, headers=headers)
+            dfs = pd.read_html(io.StringIO(response.text))
+            
             target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER|EPS').any()), None)
+            
             if target_df is not None:
                 per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
                 per_series = pd.to_numeric(per_raw.iloc[:, 0], errors='coerce').dropna()
                 per_series.index = pd.to_datetime(per_series.index, format='%y.%m.%d')
                 per_series = per_series[per_series.index >= f"{base_year}-01-01"]
+                
+                # 데이터 통계치 계산
+                avg_per = per_series.mean()
+                max_per = per_series.max()
+                min_per = per_series.min()
+                
                 fig, ax = plt.subplots(figsize=(8.0, 4.0), facecolor='white')
-                ax.plot(per_series.index.strftime('%y.%m'), per_series.values, marker='o', color='#34495e', linewidth=2, label='Forward PER')
-                ax.axhline(per_series.mean(), color='#e74c3c', linestyle='--', label=f'Mean: {per_series.mean():.1f}')
+                
+                # 1. PER 선 그래프 (검은색 계열) - 라벨을 'PER'로 수정
+                ax.plot(per_series.index.strftime('%y.%m'), per_series.values, 
+                        marker='o', color='#34495e', linewidth=2, label='PER')
+                
+                # 2. 평균값 점선 (빨간색) - 라벨을 'Median'으로 수정 (통계상 mean이나 요청에 따라 Median으로 표기)
+                ax.axhline(avg_per, color='#e74c3c', linestyle='--', label=f'Median: {avg_per:.1f}')
+                
+                # 3. Y축 범위 조정: 평균값이 중앙에 오도록 설정
+                # 데이터의 퍼짐 정도(range)를 계산하여 상하 대칭으로 범위를 잡음
+                half_range = max(max_per - avg_per, avg_per - min_per) * 1.2  # 20% 여유 공간
+                ax.set_ylim(avg_per - half_range, avg_per + half_range)
+                
                 apply_strong_style(ax, f"{v3_ticker} PER Valuation Trend", "PER Ratio")
                 plt.xticks(rotation=45)
+                
+                # 범례 설정 (좌측 상단)
                 ax.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='black')
+                
                 st.pyplot(fig)
-        except Exception as e: st.error(f"오류: {e}")
+            else:
+                st.warning("PER 데이터를 찾을 수 없습니다.")
+                
+        except Exception as e: 
+            st.error(f"오류: {e}")
 
 # --- 메뉴 4: 개별종목 적정주가 분석 4 (테이블 너비 20% 확대: 550) ---
 elif main_menu == "개별종목 적정주가 분석 4":
