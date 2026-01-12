@@ -537,7 +537,27 @@ elif main_menu == "개별종목 적정주가 분석 3":
                     
                 else: st.warning("데이터 수집 실패")
         except Exception as e: st.error(f"오류: {e}")
-# --- 메뉴 4: 개별종목 적정주가 분석 4 (테이블 너비 20% 확대: 550) ---
+
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+import requests
+import io
+from datetime import datetime
+
+# --- 유틸리티 함수: 성장률 및 PEG 계산 ---
+def calculate_growth_and_peg(price, curr_eps, past_eps, years):
+    try:
+        if past_eps <= 0 or curr_eps <= 0: # 적자 기업 처리
+            return 0, 0, 0
+        growth = ((curr_eps / past_eps) ** (1 / years) - 1) * 100
+        per = price / curr_eps
+        peg = per / growth if growth > 0 else 0
+        return growth, per, peg
+    except:
+        return 0, 0, 0
+
+# --- 메뉴 4: 개별종목 적정주가 분석 4 ---
 elif main_menu == "개별종목 적정주가 분석 4":
     with st.container(border=True):
         v4_ticker = st.text_input("🏢 분석 티커 입력 (PEG 분석)", "AAPL").upper().strip()
@@ -545,46 +565,144 @@ elif main_menu == "개별종목 적정주가 분석 4":
 
     if run_v4 and v4_ticker:
         try:
-            with st.spinner(f"[{v4_ticker}] 연도별 정밀 PEG 분석 중..."):
+            with st.spinner(f"[{v4_ticker}] 데이터 수집 및 연도별 정밀 분석 중..."):
+                # 1. 초이스스탁 EPS 데이터 수집
                 url = f"https://www.choicestock.co.kr/search/invest/{v4_ticker}/MRQ"
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                dfs = pd.read_html(io.StringIO(requests.get(url, headers=headers).text))
-                target_df = next((df for df in dfs if df.iloc[:, 0].astype(str).str.contains('EPS').any()), None)
-                if target_df is not None:
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+                
+                resp = requests.get(url, headers=headers, timeout=10)
+                dfs = pd.read_html(io.StringIO(resp.text))
+                
+                target_df = next((df for df in dfs if df.iloc[:, 0].astype(str).str.contains('EPS', na=False).any()), None)
+                
+                if target_df is None:
+                    st.error("⚠️ 해당 종목의 분기별 EPS 데이터를 찾을 수 없습니다.")
+                else:
+                    # 2. 데이터 전처리
                     target_df = target_df.set_index(target_df.columns[0])
                     eps_df = target_df[target_df.index.str.contains('EPS', na=False)].transpose()
                     eps_df.index = pd.to_datetime(eps_df.index, format='%y.%m.%d', errors='coerce')
                     eps_df = eps_df.dropna().sort_index()
                     eps_df.columns = ['Quarterly_EPS']
+                    
+                    # 3. 주가 및 야후 파이낸스 추정치 수집 (방어적 코드)
                     stock = yf.Ticker(v4_ticker)
-                    current_price = stock.history(period="1d")['Close'].iloc[-1]
-                    estimates = stock.earnings_estimate
+                    hist = stock.history(period="5d")
+                    if hist.empty:
+                        st.error("⚠️ 주가 데이터를 가져올 수 없습니다. 티커를 확인하세요.")
+                        st.stop()
+                    
+                    current_price = hist['Close'].iloc[-1]
+                    
+                    # 추정치 데이터 확보 (yfinance 최신버전 호환용)
+                    try:
+                        estimates = stock.earnings_estimate
+                        if estimates is None or estimates.empty:
+                            # 대안: info에서 forwardEps 가져오기
+                            curr_year_est = stock.info.get('forwardEps', 0)
+                            curr_q_est = curr_year_est / 4
+                            next_q_est = curr_year_est / 4
+                        else:
+                            curr_q_est = estimates['avg'].iloc[0]
+                            next_q_est = estimates['avg'].iloc[1]
+                            curr_year_est = estimates['avg'].iloc[2]
+                    except:
+                        curr_year_est = stock.info.get('forwardEps', 0)
+                        curr_q_est = curr_year_est / 4
+                        next_q_est = curr_year_est / 4
+
+                    # 4. 분석 변수 설정
                     latest_date = eps_df.index[-1]
-                    def get_ttm(idx): return eps_df['Quarterly_EPS'].iloc[idx-3 : idx+1].sum() if idx >= 3 else None
+                    latest_month = latest_date.month
+                    latest_idx = len(eps_df) - 1
 
-                    def display_peg_table(title, date, data_list):
-                        st.subheader(f"📌 {title} (기준일: {date.date()})")
-                        df_res = pd.DataFrame(data_list)
-                        df_res.columns = ['분석 기간', '과거 TTM EPS', '기준 TTM EPS', '연평균성장률(%)', 'PER', 'PEG']
-                        # 너비를 기존 450에서 약 20% 늘린 550으로 설정
-                        st.dataframe(df_res.style.format({
-                            '과거 TTM EPS': '{:.2f}', '기준 TTM EPS': '{:.2f}',
-                            '연평균성장률(%)': '{:.2f}', 'PER': '{:.2f}', 'PEG': '{:.2f}'
-                        }), width=550, hide_index=True)
+                    def get_ttm(idx):
+                        if idx < 3: return None
+                        return eps_df['Quarterly_EPS'].iloc[idx-3 : idx+1].sum()
 
+                    # --- 분석 로직 분기 실행 ---
                     results = []
-                    per_val = current_price / get_ttm(len(eps_df)-1)
-                    for y in range(5, 0, -1):
-                        t_idx = len(eps_df)-1 - (y*4)
-                        if t_idx >= 3:
-                            past_eps, curr_eps = get_ttm(t_idx), get_ttm(len(eps_df)-1)
-                            growth = ((curr_eps/past_eps)**(1/y)-1)*100
-                            results.append({
-                                'period': f"최근 {y}년 연간", 'past': past_eps, 'curr': curr_eps,
-                                'growth': growth, 'per': per_val, 'peg': per_val/growth if growth > 0 else 0
-                            })
-                    display_peg_table("[확정 실적 기준] 연간 PEG", latest_date, results)
-        except Exception as e: st.error(f"오류: {e}")
+                    analysis_type = ""
+                    base_date = latest_date
+
+                    # A. 확정 실적 기준 (10, 11, 12월 마감)
+                    if latest_month in [10, 11, 12]:
+                        analysis_type = "[확정 실적 기준] 연간 PEG 요약"
+                        current_ttm = get_ttm(latest_idx)
+                        per_val = current_price / current_ttm
+                        for y in range(5, 0, -1):
+                            target_idx = latest_idx - (y * 4)
+                            if target_idx >= 3:
+                                past_ttm = get_ttm(target_idx)
+                                if past_ttm > 0:
+                                    growth = ((current_ttm / past_ttm) ** (1/y) - 1) * 100
+                                    results.append({'분석 기간': f"최근 {y}년 연간", '과거 TTM': past_ttm, '기준 TTM': current_ttm, '성장률': growth, 'PER': per_val, 'PEG': per_val/growth if growth > 0 else 0})
+
+                    # B. 미래 1Q 포함 (7, 8, 9월 마감)
+                    elif latest_month in [7, 8, 9]:
+                        analysis_type = "[미래 1Q 포함] Forward PEG"
+                        base_date = latest_date + pd.DateOffset(months=3)
+                        f1_ttm = eps_df['Quarterly_EPS'].iloc[-3:].sum() + curr_q_est
+                        per_f1 = current_price / f1_ttm
+                        for y in range(5, 0, -1):
+                            target_idx = (latest_idx - (y * 4)) + 1
+                            if target_idx >= 3:
+                                past_ttm = get_ttm(target_idx)
+                                if past_ttm > 0:
+                                    growth = ((f1_ttm / past_ttm) ** (1/y) - 1) * 100
+                                    results.append({'분석 기간': f"최근 {y}년(미래1Q포함)", '과거 TTM': past_ttm, '기준 TTM': f1_ttm, '성장률': growth, 'PER': per_f1, 'PEG': per_f1/growth if growth > 0 else 0})
+
+                    # C. 미래 2Q 포함 (4, 5, 6월 마감)
+                    elif latest_month in [4, 5, 6]:
+                        analysis_type = "[미래 2Q 포함] Forward PEG"
+                        base_date = latest_date + pd.DateOffset(months=6)
+                        f2_ttm = eps_df['Quarterly_EPS'].iloc[-2:].sum() + curr_q_est + next_q_est
+                        per_f2 = current_price / f2_ttm
+                        for y in range(5, 0, -1):
+                            target_idx = (latest_idx - (y * 4)) + 2
+                            if target_idx >= 3:
+                                past_ttm = get_ttm(target_idx)
+                                if past_ttm > 0:
+                                    growth = ((f2_ttm / past_ttm) ** (1/y) - 1) * 100
+                                    results.append({'분석 기간': f"최근 {y}년(미래2Q포함)", '과거 TTM': past_ttm, '기준 TTM': f2_ttm, '성장률': growth, 'PER': per_f2, 'PEG': per_f2/growth if growth > 0 else 0})
+
+                    # D. 연초 데이터 부족 (1, 2, 3월 마감)
+                    else:
+                        st.info("ℹ️ 연초(1-3월) 데이터이므로 야후 파이낸스 연간 추정치로 분석합니다.")
+                        analysis_type = "[추정치 기반] 5년 장기 PEG"
+                        curr_per = current_price / curr_year_est
+                        target_idx_5y = latest_idx - (5 * 4)
+                        if target_idx_5y >= 3:
+                            past_ttm_5y = get_ttm(target_idx_5y)
+                            if past_ttm_5y > 0:
+                                growth_5y = ((curr_year_est / past_ttm_5y) ** (1/5) - 1) * 100
+                                results.append({'분석 기간': '5년 장기 추세', '과거 TTM': past_ttm_5y, '기준 TTM': curr_year_est, '성장률': growth_5y, 'PER': curr_per, 'PEG': curr_per/growth_5y if growth_5y > 0 else 0})
+
+                    # 5. 결과 출력
+                    if results:
+                        st.subheader(f"📌 {analysis_type}")
+                        st.caption(f"기준일: {base_date.strftime('%Y-%m-%d')} | 현재가: ${current_price:.2f}")
+                        
+                        df_res = pd.DataFrame(results)
+                        df_res.columns = ['분석 기간', '과거 TTM EPS', '기준 TTM EPS', '연평균성장률(%)', 'PER', 'PEG']
+                        
+                        # 스타일링 및 테이블 출력
+                        st.dataframe(df_res.style.format({
+                            '과거 TTM EPS': '{:.2f}', 
+                            '기준 TTM EPS': '{:.2f}',
+                            '연평균성장률(%)': '{:.2f}%', 
+                            'PER': '{:.2f}', 
+                            'PEG': '{:.2f}'
+                        }).highlight_between(left=0.1, right=1.0, subset=['PEG'], color='#D4EDDA'), 
+                        width=550, hide_index=True)
+                        
+                        st.success("✅ 분석 완료: PEG가 1.0 미만인 구간은 초록색으로 표시됩니다.")
+                    else:
+                        st.warning("⚠️ 분석에 충분한 과거 실적 데이터가 없습니다.")
+
+        except Exception as e:
+            st.error(f"❌ 분석 중 오류 발생: {e}")
+            st.info("팁: 티커가 올바른지, 혹은 사이트 구조가 변경되었는지 확인하세요.")
 
 # --- 메뉴 5: 기업 가치 비교 ---
 elif main_menu == "기업 가치 비교 (PER/EPS)":
