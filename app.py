@@ -181,82 +181,116 @@ with st.sidebar:
 
 st.title(f"🚀 {main_menu}")
 
-# --- 메뉴 1: 개별종목 적정주가 분석 1 ---
+# --- 메뉴 1: 개별종목 적정주가 분석 1 (통합 버전) ---
 if main_menu == "개별종목 적정주가 분석 1":
+    # 1. 상단 입력 UI 레이아웃
     with st.container(border=True):
         col1, col2 = st.columns([1, 2])
-        val_ticker = col1.text_input("🏢 분석 티커", "TSLA").upper().strip()
-        val_predict_mode = col2.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True, index=0)
+        val_ticker = col1.text_input("🏢 분석 티커 입력", "TSLA").upper().strip()
+        val_predict_mode = col2.radio(
+            "🔮 미래 예측 옵션 (Estimates)", 
+            ("None", "현재 분기 예측", "다음 분기 예측"), 
+            horizontal=True, 
+            index=0
+        )
         run_val = st.button("적정주가 분석 실행", type="primary", use_container_width=True)
-    
+
     if run_val and val_ticker:
-        combined = fetch_valuation_data(val_ticker, val_predict_mode)
-        
-        if combined is not None:
-            final_price = combined['Close'].iloc[-1]
-            target_date_label = combined.index[-1]
+        with st.spinner(f"[{val_ticker}] 데이터를 수집하고 연도별 시뮬레이션을 진행 중입니다..."):
+            # 데이터 가져오기 (캐싱된 함수 호출)
+            combined = fetch_valuation_data(val_ticker, val_predict_mode)
             
-            # --- [수정] 요약 데이터를 담을 리스트 ---
-            summary_list = []
+            if combined is not None and not combined.empty:
+                final_price = combined['Close'].iloc[-1]
+                target_date_label = combined.index[-1]
+                
+                # 요약 표를 위한 리스트 생성
+                summary_list = []
 
-            # 1. 그래프 생성 및 데이터 수집
-            for base_year in range(2017, 2026):
-                df_plot = combined[combined.index >= f'{base_year}-01'].copy()
-                if len(df_plot) < 2 or df_plot.iloc[0]['EPS'] <= 0: 
-                    continue
+                # --- 파트 A: 연도별 그래프 생성 ---
+                st.subheader(f"📈 {val_ticker} 연도별 적정주가 시뮬레이션")
                 
-                # 기준점 PER 계산 (Base PER)
-                scale_factor = df_plot.iloc[0]['Close'] / df_plot.iloc[0]['EPS']
-                df_plot['Fair_Value'] = df_plot['EPS'] * scale_factor
-                
-                # 최종 시점 적정주가 및 괴리율
-                last_fair_value = df_plot.iloc[-1]['Fair_Value']
-                gap_pct = ((final_price - last_fair_value) / last_fair_value) * 100
-                status = "🔴 고평가" if gap_pct > 0 else "🔵 저평가"
+                # 2017년부터 현재까지 루프
+                for base_year in range(2017, 2026):
+                    # 해당 연도 1월 이후 데이터 필터링
+                    df_plot = combined[combined.index >= f'{base_year}-01'].copy()
+                    
+                    # 데이터가 부족하거나 기준점 EPS가 적자(0 이하)인 경우 건너뜀
+                    if len(df_plot) < 2 or df_plot.iloc[0]['EPS'] <= 0:
+                        continue
+                    
+                    # [핵심 로직] 기준점의 PER을 적정 배수(Scale Factor)로 산출
+                    scale_factor = df_plot.iloc[0]['Close'] / df_plot.iloc[0]['EPS']
+                    df_plot['Fair_Value'] = df_plot['EPS'] * scale_factor
+                    
+                    # 마지막 시점의 적정가와 현재가 비교 (괴리율)
+                    last_fair_value = df_plot.iloc[-1]['Fair_Value']
+                    gap_pct = ((final_price - last_fair_value) / last_fair_value) * 100
+                    status = "🔴 고평가" if gap_pct > 0 else "🔵 저평가"
 
-                # --- [수정] 표 구성을 위한 데이터 저장 ---
-                summary_list.append({
-                    "기준 연도": f"{base_year}년",
-                    "기준 PER": f"{scale_factor:.1f}x",
-                    "적정 주가": f"${last_fair_value:.2f}",
-                    "현재 주가": f"${final_price:.2f}",
-                    "괴리율 (%)": f"{gap_pct:+.1f}%",
-                    "상태": status
-                })
+                    # 표 데이터를 리스트에 추가
+                    summary_list.append({
+                        "기준 연도": f"{base_year}년",
+                        "기준 PER": f"{scale_factor:.1f}x",
+                        "적정 주가": f"${last_fair_value:.2f}",
+                        "현재 주가": f"${final_price:.2f}",
+                        "괴리율 (%)": f"{gap_pct:+.1f}%",
+                        "상태": status
+                    })
 
-                # 그래프 그리기
-                fig, ax = plt.subplots(figsize=(7.7, 3.5), facecolor='white')
-                ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', linewidth=2.0, marker='o', markersize=4, label='Market Price')
-                ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', linestyle='--', marker='s', markersize=4, label=f'Fair Value (Base: {base_year})')
-                
-                # 예측 구간 배경색 하이라이트 (Est. 표시가 인덱스에 있을 경우)
-                for i, idx in enumerate(df_plot.index):
-                    if "(Est.)" in str(idx):
-                        ax.axvspan(i-0.5, i+0.5, color='orange', alpha=0.1)
+                    # 그래프 시각화
+                    fig, ax = plt.subplots(figsize=(8.5, 4.0), facecolor='white')
+                    
+                    # 실제 주가 라인
+                    ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', linewidth=2.0, marker='o', markersize=4, label='Market Price')
+                    # 적정 주가 점선
+                    ax.plot(df_plot.index, df_plot['Fair_Value'], color='#d62728', linestyle='--', marker='s', markersize=4, label=f'Fair Value (Base: {base_year})')
+                    
+                    # 미래 예측(Est.) 구간 하이라이트
+                    for i, idx in enumerate(df_plot.index):
+                        if "(Est.)" in str(idx):
+                            ax.axvspan(i-0.5, i+0.5, color='orange', alpha=0.1)
 
-                apply_strong_style(ax, f"Base Year: {base_year} (Gap: {gap_pct:+.1f}%)", "Price ($)")
-                plt.xticks(rotation=45)
-                ax.legend(loc='upper left', fontsize=8)
-                st.pyplot(fig)
-                plt.close(fig) # 메모리 효율을 위해 닫기
+                    # 스타일 적용 및 출력
+                    apply_strong_style(ax, f"Base Year: {base_year} (Gap: {gap_pct:+.1f}%)", "Price ($)")
+                    plt.xticks(rotation=45)
+                    ax.legend(loc='upper left', fontsize=9)
+                    
+                    st.pyplot(fig)
+                    plt.close(fig) # 메모리 관리
 
-            # --- [수정] 반복문 종료 후 요약 표 출력 ---
-            if summary_list:
-                st.markdown("---")
-                st.subheader(f"📊 {val_ticker} 연도별 밸류에이션 요약 (기준: {target_date_label})")
-                
-                summary_df = pd.DataFrame(summary_list)
-                
-                # Streamlit 테이블 출력
-                st.dataframe(
-                    summary_df, 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-                
-                st.info("💡 **Tip**: '저평가'가 많은 종목일수록 역사적 밸류에이션 하단에 있을 가능성이 높습니다.")
+                # --- 파트 B: 최종 요약 표 출력 (너비 60% 조절) ---
+                if summary_list:
+                    st.write("\n")
+                    st.markdown("---")
+                    st.subheader(f"📊 {val_ticker} 밸류에이션 종합 요약")
+                    st.caption(f"분석 기준점(Target Date): {target_date_label}")
+
+                    summary_df = pd.DataFrame(summary_list)
+
+                    # 화면 중앙에 60% 너비로 배치
+                    spacer_l, main_content, spacer_r = st.columns([2, 6, 2])
+                    
+                    with main_content:
+                        st.dataframe(
+                            summary_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "기준 연도": st.column_config.TextColumn("기준 연도"),
+                                "기준 PER": st.column_config.TextColumn("기준 PER"),
+                                "적정 주가": st.column_config.TextColumn("적정 주가"),
+                                "현재 주가": st.column_config.TextColumn("현재 주가"),
+                                "괴리율 (%)": st.column_config.TextColumn("괴리율 (%)"),
+                                "상태": st.column_config.TextColumn("상태"),
+                            }
+                        )
+                    
+                    st.info(f"💡 **분석 가이드**: 다양한 기준 연도 중 '저평가' 상태가 압도적으로 많다면, 현재 주가는 역사적 저평가 영역에 있을 확률이 높습니다.")
+                else:
+                    st.warning("분석에 필요한 흑자(EPS > 0) 데이터가 부족하여 요약 표를 생성할 수 없습니다.")
             else:
-                st.warning("분석 가능한 흑자 데이터가 충분하지 않습니다.")
+                st.error("데이터를 불러오지 못했습니다. 티커를 확인하거나 잠시 후 다시 시도해 주세요.")
 
 # --- 메뉴 2: 개별종목 적정주가 분석 2 ---
 elif main_menu == "개별종목 적정주가 분석 2":
