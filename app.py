@@ -308,11 +308,18 @@ if main_menu == "개별종목 적정주가 분석 1":
 
 # --- 메뉴 2: 개별종목 적정주가 분석 2 (UI 비율 및 버튼명 수정 버전) ---
 if main_menu == "개별종목 적정주가 분석 2":
-    # 1. 상단 입력 UI 레이아웃 (50%씩 배분)
+    # 1. 상단 입력 UI 레이아웃 (전체 너비의 50%씩 배분하여 왼쪽 정렬)
     with st.container(border=True):
-        col1, col2 = st.columns([1, 1])  # 1:1 비율로 설정하여 각각 50% 점유
-        val_ticker_2 = col1.text_input("🏢 분석 티커 입력", "TSLA", key="ticker_2").upper().strip()
-        run_val_2 = col2.button("당해 EPS 기반 가치 분석", type="primary", use_container_width=True)
+        # 입력창과 버튼을 묶어서 왼쪽으로 배치하기 위해 5:5 비율의 컬럼 생성
+        col1, col2 = st.columns([1, 1])  
+        
+        with col1:
+            val_ticker_2 = st.text_input("🏢 분석 티커 입력", "TSLA", key="ticker_2").upper().strip()
+        
+        with col2:
+            # 입력창의 라벨 높이만큼 공간을 띄워 버튼과 입력창의 높이를 맞춤
+            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+            run_val_2 = st.button("당해 EPS 기반 가치 분석", type="primary", use_container_width=True)
 
     if run_val_2 and val_ticker_2:
         with st.spinner(f"[{val_ticker_2}] 당해 실적 기반 정밀 가치 분석을 진행 중입니다..."):
