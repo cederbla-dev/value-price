@@ -520,22 +520,33 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         st.pyplot(fig)
                     
                     else: # PER 테이블
-                        st.subheader(f"📊 {v3_ticker} 분기별 PER 데이터 리스트")
-                        table_df = plot_df[['Label', 'PER']].copy()
-                        table_df.columns = ['분기', 'PER']
+                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 데이터 리스트")
                         
-                        # --- 수정된 코드 구간: 너비 40% 및 모든 테두리 적용 ---
-                        # CSS를 사용하여 표의 너비와 테두리 스타일 지정
-                        table_html = table_df.style.format({'PER': '{:.2f}'})\
+                        # 1. 데이터 재구성 (Label에서 연도와 분기 추출)
+                        table_df = plot_df[['Label', 'PER']].copy()
+                        # Label 형식(예: '17.Q1')에서 연도('2017')와 분기('Q1') 추출
+                        table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
+                        table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
+                        
+                        # 2. 피벗 테이블 생성 (행: 연도, 열: 분기)
+                        pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
+                        # 컬럼 순서 보장 (Q1, Q2, Q3, Q4)
+                        pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
+                        # 인덱스 이름 제거 및 데이터프레임 정리
+                        pivot_df.index.name = 'Year'
+                        pivot_df = pivot_df.reset_index()
+
+                        # 3. HTML/CSS를 이용한 스타일링 (너비 40%, 모든 테두리)
+                        table_html = pivot_df.style.format(precision=2, na_rep='-')\
                             .hide(axis='index')\
-                            .set_table_attributes('style="width: 40%; border-collapse: collapse; border: 1px solid #ddd;"')\
+                            .set_table_attributes('style="width: 40%; border-collapse: collapse; border: 1px solid #ddd; font-size: 14px;"')\
                             .set_table_styles([
-                                {'selector': 'th', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('background-color', '#f8f9fa'), ('text-align', 'center')]},
+                                {'selector': 'th', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('background-color', '#f8f9fa'), ('text-align', 'center'), ('font-weight', 'bold')]},
                                 {'selector': 'td', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('text-align', 'center')]}
                             ]).to_html()
                         
                         st.write(table_html, unsafe_allow_html=True)
-                        # --------------------------------------------------
+                        
                         st.info("💡 위 테이블의 데이터를 바탕으로 향후 상세 분석 기능을 추가할 예정입니다.")
 
                 else: st.warning("데이터 수집 실패")
