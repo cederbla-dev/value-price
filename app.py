@@ -12,10 +12,6 @@ import matplotlib.ticker as mtick
 # 중요: 이 부분이 누락되면 스크린샷과 같은 에러가 발생합니다.
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-# --- 설정 및 사이드바 ---
-st.set_page_config(layout="wide")
-main_menu = st.sidebar.radio("분석 메뉴", ["개별종목 적정주가 분석 5", "기타 메뉴(예시)"])
-
 # 기본 설정
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Stock & ETF Professional Analyzer", layout="wide")
