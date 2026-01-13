@@ -424,160 +424,119 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-# --- [중요] 세션 상태 초기화 (화면 리셋 방지용) ---
-if 'v3_5_data' not in st.session_state:
-    st.session_state.v3_5_data = None
-if 'v3_5_ticker' not in st.session_state:
-    st.session_state.v3_5_ticker = ""
-
 # --- 메뉴 3: 개별종목 적정주가 분석 3 ---
-if main_menu == "개별종목 적정주가 분석 통합":
-    st.title("🚀 개별종목 적정주가 통합 분석 (그래프 & 테이블)")
-
-    # 1. 입력 컨테이너
+elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([1, 1, 2])
-        v_ticker = col1.text_input("🏢 분석 티커", "MSFT").upper().strip()
-        base_year = col2.slider("📅 차트 시작 연도", 2017, 2025, 2018)
-        v_predict_mode = col3.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True)
+        v3_ticker = col1.text_input("🏢 분석 티커", "MSFT").upper().strip()
+        base_year = col2.slider("📅 차트 시작 연도", 2017, 2025, 2017)
+        v3_predict_mode = col3.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True)
+        run_v3 = st.button("PER Trend 분석 실행", type="primary", use_container_width=True)
         
-        run_analysis = st.button("전합 분석 실행 (그래프 + 테이블)", type="primary", use_container_width=True)
-
-    if run_analysis and v_ticker:
+    if run_v3 and v3_ticker:
         try:
             with st.spinner('데이터를 분석 중입니다...'):
-                # [데이터 수집 1] Choicestock 크롤링
-                url = f"https://www.choicestock.co.kr/search/invest/{v_ticker}/MRQ"
+                # 1. 데이터 수집 로직
+                url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
                 headers = {'User-Agent': 'Mozilla/5.0'}
                 response = requests.get(url, headers=headers)
                 dfs = pd.read_html(io.StringIO(response.text))
                 target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER|EPS').any()), None)
-
+                
                 if target_df is not None:
                     per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
                     eps_raw = target_df[target_df.index.astype(str).str.contains('EPS')].transpose()
-                    
                     combined = pd.DataFrame({
                         'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
                         'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
                     }).dropna()
                     combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
                     combined = combined.sort_index()
-
-                    # 분기 라벨링 함수
-                    def get_q_info(dt):
-                        y = dt.year if dt.day > 5 else (dt - timedelta(days=5)).year
-                        m = dt.month if dt.day > 5 else (dt - timedelta(days=5)).month
-                        q = (m-1)//3 + 1
-                        return y, q
-
-                    combined['Year'], combined['Quarter'] = zip(*combined.index.map(get_q_info))
-                    combined['Label'] = combined.apply(lambda x: f"{str(int(x['Year']))[2:]}.Q{int(x['Quarter'])}", axis=1)
-
-                    # [데이터 수집 2] yfinance (미래 예측용 및 밴드차트용)
-                    stock = yf.Ticker(v_ticker)
-                    hist = stock.history(period="5y")
-                    current_price = stock.fast_info.get('last_price', hist['Close'].iloc[-1])
-                    ttm_eps = stock.info.get('trailingEps', combined['EPS'].iloc[-4:].sum())
-
-                    # 미래 예측 계산 로직
-                    plot_df = combined[combined.index >= f"{base_year}-01-01"].copy()
-                    est = stock.earnings_estimate
                     
-                    if v_predict_mode != "None" and est is not None and not est.empty:
-                        hist_eps = combined['EPS'].tolist()
-                        l_yr, l_q = int(combined['Year'].iloc[-1]), int(combined['Quarter'].iloc[-1])
-                        
-                        # 현재 분기(T+1)
-                        c_q_est = est.loc['0q', 'avg']
-                        t1_q, t1_yr = (l_q+1, l_yr) if l_q < 4 else (1, l_yr+1)
-                        plot_df.loc[pd.Timestamp(f"{t1_yr}-{(t1_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-3:]) + c_q_est), np.nan, t1_yr, t1_q, f"{str(t1_yr)[2:]}.Q{t1_q}(E)"]
+                    def get_q_label(dt):
+                        year = dt.year if dt.day > 5 else (dt - timedelta(days=5)).year
+                        month = dt.month if dt.day > 5 else (dt - timedelta(days=5)).month
+                        q = (month-1)//3 + 1
+                        return f"{str(year)[2:]}.Q{q}"
 
-                        # 다음 분기(T+2)
-                        if v_predict_mode == "다음 분기 예측":
-                            t2_q, t2_yr = (t1_q+1, t1_yr) if t1_q < 4 else (1, t1_yr+1)
-                            plot_df.loc[pd.Timestamp(f"{t2_yr}-{(t2_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, t2_yr, t2_q, f"{str(t2_yr)[2:]}.Q{t2_q}(E)"]
+                    combined['Label'] = [get_q_label(d) for d in combined.index]
+                    plot_df = combined[combined.index >= f"{base_year}-01-01"].copy()
 
-                    # 테이블용 피벗 생성
-                    fiscal_table = combined.pivot(index='Year', columns='Quarter', values='PER')
-                    fiscal_table.columns = [f'Q{int(c)}' for c in fiscal_table.columns]
+                    # 2. 미래 예측 계산 (슬라이딩 TTM)
+                    if v3_predict_mode != "None":
+                        stock = yf.Ticker(v3_ticker)
+                        current_price = stock.fast_info.get('last_price', stock.history(period="1d")['Close'].iloc[-1])
+                        est = stock.earnings_estimate
+                        if est is not None and not est.empty:
+                            hist_eps = combined['EPS'].tolist()
+                            l_lab = plot_df['Label'].iloc[-1]
+                            l_yr, l_q = int("20"+l_lab.split('.')[0]), int(l_lab.split('Q')[1])
+                            
+                            c_q_est = est.loc['0q', 'avg']
+                            t1_q, t1_yr = (l_q+1, l_yr) if l_q < 4 else (1, l_yr+1)
+                            plot_df.loc[pd.Timestamp(f"{t1_yr}-{(t1_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-3:]) + c_q_est), np.nan, f"{str(t1_yr)[2:]}.Q{t1_q}(E)"]
 
-                    # 세션 저장
-                    st.session_state.v3_5_data = {
-                        'plot_df': plot_df,
-                        'fiscal_table': fiscal_table,
-                        'current_price': current_price,
-                        'ttm_eps': ttm_eps,
-                        'ticker': v_ticker
-                    }
-                    st.session_state.v3_5_ticker = v_ticker
-                else:
-                    st.error("데이터 수집에 실패했습니다.")
-        except Exception as e:
-            st.error(f"오류 발생: {e}")
+                            if v3_predict_mode == "다음 분기 예측":
+                                t2_q, t2_yr = (t1_q+1, t1_yr) if t1_q < 4 else (1, t1_yr+1)
+                                plot_df.loc[pd.Timestamp(f"{t2_yr}-{(t2_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, f"{str(t2_yr)[2:]}.Q{t2_q}(E)"]
 
-    # --- 결과 출력 영역 ---
-    if st.session_state.v3_5_data:
-        data = st.session_state.v3_5_data
-        
-        # [1] PER Trend 그래프 (기존 메뉴 3 기능)
-        st.subheader(f"📊 {data['ticker']} PER 추이 및 미래 예측")
-        plot_df = data['plot_df']
-        avg_per = plot_df['PER'].mean()
-        median_per = plot_df['PER'].median()
-        
-        fig, ax = plt.subplots(figsize=(12, 5), facecolor='white')
-        x_idx = range(len(plot_df))
-        ax.plot(x_idx, plot_df['PER'], marker='o', color='#34495e', linewidth=2, label='Forward PER')
-        ax.axhline(avg_per, color='#e74c3c', linestyle='--', label=f'Avg: {avg_per:.1f}')
-        ax.set_xticks(x_idx)
-        ax.set_xticklabels(plot_df['Label'], rotation=45)
-        
-        # 예측 구간 하이라이트
-        for i, label in enumerate(plot_df['Label']):
-            if "(E)" in str(label):
-                ax.axvspan(i-0.4, i+0.4, color='#fff9c4', alpha=0.5)
-        
-        ax.legend(loc='upper left')
-        st.pyplot(fig)
+                    # 3. 통계 지표
+                    avg_per = plot_df['PER'].mean()
+                    median_per = plot_df['PER'].median()
+                    max_p, min_p = plot_df['PER'].max(), plot_df['PER'].min()
+                    
+                    # 4. 시각화 (범례 및 배경 오류 완전 해결)
+                    plt.close('all')
+                    fig, ax = plt.subplots(figsize=(12, 6.5), facecolor='white')
+                    ax.set_facecolor('white')
+                    
+                    x_idx = range(len(plot_df))
+                    # 각 그래프 요소에 label 추가 (범례용)
+                    ax.plot(x_idx, plot_df['PER'], marker='o', color='#34495e', linewidth=2.5, zorder=4, label='Forward PER')
+                    ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, zorder=2, label=f'Average: {avg_per:.1f}')
+                    ax.axhline(median_per, color='#8e44ad', linestyle='-.', linewidth=1.5, zorder=2, label=f'Median: {median_per:.1f}')
+                    
+                    # Y축 범위 중앙 정렬
+                    h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
+                    ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
 
-        # [2] 정밀 PER 테이블 (기존 메뉴 5 기능)
-        st.divider()
-        st.subheader("🗓️ 연도/분기별 PER 데이터 시트")
-        st.info("💡 행(연도)을 클릭하면 해당 연도의 모든 분기가 선택되어 평균이 계산됩니다.")
+                    # [핵심 수정 1] 범례(Legend) 강제 가시화 설정
+                    # 텍스트 색상을 검은색('black')으로 강제하여 사라짐 방지
+                    leg = ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
+                    leg.get_frame().set_facecolor('white')
+                    leg.get_frame().set_edgecolor('black')
+                    for text in leg.get_texts():
+                        text.set_color('black')
 
-        df_aggrid = data['fiscal_table'].sort_index(ascending=False).reset_index().fillna('-')
-        
-        gb = GridOptionsBuilder.from_dataframe(df_aggrid)
-        gb.configure_selection(selection_mode="multiple", use_checkbox=True) 
-        gb.configure_grid_options(enableRangeSelection=True)
-        grid_opt = gb.build()
+                    # [핵심 수정 2] 선 우측에 직접 텍스트 라벨 추가 (이중 확인)
+                    x_pos = len(plot_df) - 0.5
+                    ax.text(x_pos, avg_per, f' Average: {avg_per:.1f}', color='#e74c3c', va='center', fontweight='bold', fontsize=9)
+                    ax.text(x_pos, median_per, f' Median: {median_per:.1f}', color='#8e44ad', va='center', fontweight='bold', fontsize=9)
 
-        grid_res = AgGrid(
-            df_aggrid,
-            gridOptions=grid_opt,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
-            theme='streamlit',
-            height=250,
-            enable_enterprise_modules=True
-        )
+                    # 축 및 레이블 설정 (검은색 고정)
+                    ax.set_title(f"[{v3_ticker}] PER Valuation Trend (Mean vs Median)", fontsize=15, pad=25, color='black', fontweight='bold')
+                    ax.set_ylabel("PER Ratio", fontsize=11, color='black', fontweight='bold')
+                    ax.set_xlabel("Quarter (Time)", fontsize=11, color='black', fontweight='bold')
+                    ax.set_xticks(x_idx)
+                    ax.set_xticklabels(plot_df['Label'], rotation=45, fontsize=10, color='black')
+                    
+                    # 테두리 및 그리드
+                    ax.grid(True, axis='y', linestyle=':', alpha=0.5, color='gray')
+                    for s in ax.spines.values():
+                        s.set_visible(True)
+                        s.set_edgecolor('black')
 
-        # [3] 선택 데이터 계산 결과
-        selected = grid_res['selected_rows']
-        if selected is not None and len(selected) > 0:
-            sel_df = pd.DataFrame(selected)
-            # 수치 데이터만 추출 (Year 제외)
-            vals = pd.to_numeric(sel_df.drop(columns=['Year', '_selectedRowNodeInfo'], errors='ignore').values.flatten(), errors='coerce')
-            vals = vals[~np.isnan(vals)]
-            
-            if len(vals) > 0:
-                selected_avg = np.mean(vals)
-                col_res1, col_res2 = st.columns(2)
-                col_res1.metric("선택 범위 평균 PER", f"{selected_avg:.2f}x")
-                col_res2.metric("적용 적정주가", f"${(data['ttm_eps'] * selected_avg):.2f}")
-        else:
-            st.caption("위 테이블에서 분석하고자 하는 연도의 체크박스를 선택하세요.")
+                    # 미래 예측 하이라이트
+                    for i, (idx, row) in enumerate(plot_df.iterrows()):
+                        if "(E)" in str(row['Label']):
+                            ax.axvspan(i-0.4, i+0.4, color='#fff9c4', alpha=0.7, zorder=1)
+                            ax.text(i, row['PER'] + (h_rng*0.08), f"{row['PER']:.1f}", ha='center', color='#d35400', fontweight='bold')
 
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    
+                else: st.warning("데이터 수집 실패")
+        except Exception as e: st.error(f"오류: {e}")
 
 # --- 메뉴 4: 개별종목 적정주가 분석 4 ---
 elif main_menu == "개별종목 적정주가 분석 4":
