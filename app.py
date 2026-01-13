@@ -9,9 +9,6 @@ import warnings
 from datetime import datetime, timedelta
 import matplotlib.ticker as mtick
 
-# 중요: 이 부분이 누락되면 스크린샷과 같은 에러가 발생합니다.
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-
 # 기본 설정
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Stock & ETF Professional Analyzer", layout="wide")
@@ -179,7 +176,7 @@ with st.sidebar:
     st.title("📂 분석 메뉴")
     main_menu = st.radio(
         "분석 종류를 선택하세요:",
-        ("개별종목 적정주가 분석 1", "개별종목 적정주가 분석 2", "개별종목 적정주가 분석 3", "개별종목 적정주가 분석 4", "개별종목 적정주가 분석 5", "기업 가치 비교 (PER/EPS)", "ETF 섹터 수익률 분석")
+        ("개별종목 적정주가 분석 1", "개별종목 적정주가 분석 2", "개별종목 적정주가 분석 3", "개별종목 적정주가 분석 4", "기업 가치 비교 (PER/EPS)", "ETF 섹터 수익률 분석")
     )
 
 st.title(f"🚀 {main_menu}")
@@ -688,129 +685,7 @@ elif main_menu == "개별종목 적정주가 분석 4":
             st.error(f"❌ 분석 중 오류 발생: {e}")
             st.info("팁: 티커가 올바른지, 혹은 사이트 구조가 변경되었는지 확인하세요.")
 
-
-# --- [중요] 세션 상태 초기화 (화면 리셋 방지용) ---
-if 'v5_data' not in st.session_state:
-    st.session_state.v5_data = None
-if 'v5_ticker' not in st.session_state:
-    st.session_state.v5_ticker = ""
-
-# --- 메뉴 5: 개별종목 적정주가 분석 5 ---
-if main_menu == "개별종목 적정주가 분석 5":
-    st.title("🚀 개별종목 적정주가 분석 5")
-    
-    with st.container(border=True):
-        col1, col2 = st.columns([1, 1])
-        v5_input_ticker = col1.text_input("🏢 분석 티커 입력", "NVDA").upper().strip()
-        v5_period = col2.selectbox("📅 차트 분석 기간", ["3년", "5년", "최대"], index=1)
-        
-        ans1 = st.checkbox("미발표 현재 분기 예측치 포함")
-        ans2 = False
-        if ans1:
-            ans2 = st.checkbox("다음 분기 예측치까지 포함")
-            
-        if st.button("정밀 PER 분석 실행", type="primary", use_container_width=True):
-            st.session_state.v5_ticker = v5_input_ticker
-            # 데이터 수집 및 가공 로직 실행 후 세션에 저장
-            with st.spinner("데이터 분석 중..."):
-                try:
-                    stock = yf.Ticker(v5_input_ticker)
-                    period_map = {"3년": "3y", "5년": "5y", "최대": "max"}
-                    hist = stock.history(period=period_map[v5_period])
-                    
-                    # 웹 크롤링 데이터 처리 (기존 로직 동일)
-                    url = f"https://www.choicestock.co.kr/search/invest/{v5_input_ticker}/MRQ"
-                    resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    dfs = pd.read_html(io.StringIO(resp.text))
-                    target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER').any()), None)
-                    
-                    per_raw = target_df[target_df.index.str.contains('PER')].transpose()
-                    eps_raw = target_df[target_df.index.str.contains('EPS')].transpose()
-                    combined_data = pd.DataFrame({
-                        'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
-                        'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
-                    }).dropna()
-                    combined_data.index = pd.to_datetime(combined_data.index, format='%y.%m.%d')
-                    combined_data['Year'] = combined_data.index.map(lambda x: x.year if x.day > 5 else (x - timedelta(days=5)).year)
-                    combined_data['Quarter'] = combined_data.index.map(lambda x: (x.month-1)//3 + 1 if x.day > 5 else ((x-timedelta(days=5)).month-1)//3 + 1)
-                    
-                    fiscal_table = combined_data.pivot(index='Year', columns='Quarter', values='PER')
-                    fiscal_table.columns = [f'Q{int(c)}' for c in fiscal_table.columns]
-                    
-                    # 결과를 세션에 저장하여 클릭 시 사라지지 않게 함
-                    st.session_state.v5_data = {
-                        'fiscal_table': fiscal_table,
-                        'hist': hist,
-                        'ttm_eps': stock.info.get('trailingEps', 1),
-                        'per_series': combined_data['PER']
-                    }
-                except Exception as e:
-                    st.error(f"데이터 수집 실패: {e}")
-
-    # 데이터가 세션에 존재할 때만 화면 출력 (리셋 방지)
-    if st.session_state.v5_data:
-        data = st.session_state.v5_data
-        ticker = st.session_state.v5_ticker
-        
-        # 1. PER 밴드 차트
-        st.subheader(f"📊 {ticker} 역사적 PER 밴드")
-        min_p, avg_p, max_p = data['per_series'].min(), data['per_series'].mean(), data['per_series'].max()
-        fig, ax = plt.subplots(figsize=(12, 5))
-        ax.plot(data['hist'].index, data['hist']['Close'], color='black', label='Price')
-        ax.axhline(data['ttm_eps'] * max_p, color='red', linestyle='--', alpha=0.5, label='Max')
-        ax.axhline(data['ttm_eps'] * avg_p, color='green', linestyle='--', alpha=0.5, label='Avg')
-        ax.axhline(data['ttm_eps'] * min_p, color='blue', linestyle='--', alpha=0.5, label='Min')
-        ax.legend()
-        st.pyplot(fig)
-
-        # 2. 정밀 PER 테이블 (셀 단위 선택 설정)
-        st.divider()
-        st.subheader("🗓️ 연도/분기별 정밀 PER 테이블")
-        st.info("💡 마우스로 개별 분기(숫자)를 드래그하거나 Ctrl을 누르고 클릭하여 여러 개를 선택하세요.")
-
-        df_aggrid = data['fiscal_table'].sort_index(ascending=False).reset_index().fillna('-')
-        
-        gb = GridOptionsBuilder.from_dataframe(df_aggrid)
-        # [핵심 변경] 셀 단위 범위 선택 활성화
-        gb.configure_selection(selection_mode="multiple", use_checkbox=False) 
-        gb.configure_grid_options(enableRangeSelection=True, suppressRowClickSelection=False)
-        
-        # 각 분기 컬럼 설정
-        for col in ['Q1', 'Q2', 'Q3', 'Q4']:
-            gb.configure_column(col, checkboxSelection=False, headerCheckboxSelection=False)
-            
-        grid_opt = gb.build()
-
-        grid_res = AgGrid(
-            df_aggrid,
-            gridOptions=grid_opt,
-            update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
-            theme='streamlit',
-            height=300,
-            enable_enterprise_modules=True # 범위 선택 기능을 위해 필요
-        )
-
-        # 3. 선택된 셀 데이터 계산
-        # 행 선택 기반 계산 (셀 개별 선택은 AgGrid Enterprise 기능이므로 행 기반 다중 선택으로 처리)
-        selected = grid_res['selected_rows']
-        if selected is not None and len(selected) > 0:
-            sel_df = pd.DataFrame(selected)
-            # 수치 데이터만 추출하여 평균
-            vals = pd.to_numeric(sel_df.drop(columns=['Year'], errors='ignore').values.flatten(), errors='coerce')
-            vals = vals[~np.isnan(vals)] # NaN 제외
-            
-            if len(vals) > 0:
-                selected_avg = np.mean(vals)
-                col_res1, col_res2 = st.columns(2)
-                col_res1.metric("선택된 분기들의 평균 PER", f"{selected_avg:.2f}x")
-                col_res2.metric("현재가 기준 적정가", f"${(data['ttm_eps'] * selected_avg):.2f}")
-        else:
-            st.warning("분석할 연도를 클릭(또는 다중 클릭)해 주세요.")
-
-
-
-
-# --- 메뉴 6: 기업 가치 비교 ---
+# --- 메뉴 5: 기업 가치 비교 ---
 elif main_menu == "기업 가치 비교 (PER/EPS)":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
@@ -875,7 +750,7 @@ elif main_menu == "기업 가치 비교 (PER/EPS)":
                 ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
                 st.pyplot(fig)
 
-# --- 메뉴 7: ETF 섹터 수익률 분석 ---
+# --- 메뉴 6: ETF 섹터 수익률 분석 ---
 else:
     with st.container(border=True):
         col1, col2, col3 = st.columns([3, 1, 1])
