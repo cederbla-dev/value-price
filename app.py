@@ -685,59 +685,126 @@ elif main_menu == "개별종목 적정주가 분석 4":
             st.error(f"❌ 분석 중 오류 발생: {e}")
             st.info("팁: 티커가 올바른지, 혹은 사이트 구조가 변경되었는지 확인하세요.")
 
-# --- 메뉴 5: 개별종목 적정주가 분석 5 (추가된 부분) ---
+# --- 메뉴 5: 개별종목 적정주가 분석 5 (정밀 PER 분석 및 선택 평균 로직 통합) ---
 elif main_menu == "개별종목 적정주가 분석 5":
     with st.container(border=True):
         col1, col2 = st.columns([1, 1])
-        v5_ticker = col1.text_input("🏢 분석 티커 입력 (PER Band)", "NVDA").upper().strip()
-        v5_period = col2.selectbox("📅 분석 기간", ["3년", "5년", "최대"], index=1)
-        run_v5 = st.button("PER Band 적정주가 분석 실행", type="primary", use_container_width=True)
+        v5_ticker = col1.text_input("🏢 분석 티커 입력", "NVDA").upper().strip()
+        v5_period = col2.selectbox("📅 차트 분석 기간", ["3년", "5년", "최대"], index=1)
+        
+        # 예측치 포함 여부 선택 옵션 추가
+        ans1 = st.checkbox("미발표 현재 분기 예측치 포함")
+        ans2 = False
+        if ans1:
+            ans2 = st.checkbox("다음 분기 예측치까지 포함")
+            
+        run_v5 = st.button("정밀 PER 분석 실행", type="primary", use_container_width=True)
 
     if run_v5 and v5_ticker:
         try:
-            with st.spinner("역사적 PER 밴드 데이터를 산출 중입니다..."):
+            with st.spinner("데이터를 수집하고 정밀 테이블을 생성 중입니다..."):
+                # 1. 기초 데이터 수집 (YFinance)
                 stock = yf.Ticker(v5_ticker)
                 period_map = {"3년": "3y", "5년": "5y", "최대": "max"}
                 hist = stock.history(period=period_map[v5_period])
+                
                 if hist.empty:
                     st.error("주가 데이터를 가져올 수 없습니다.")
                 else:
+                    # 2. 웹 크롤링 및 데이터 가공 (기존 로직)
+                    url = f"https://www.choicestock.co.kr/search/invest/{v5_ticker}/MRQ"
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    resp = requests.get(url, headers=headers)
+                    dfs = pd.read_html(io.StringIO(resp.text))
+                    
+                    target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER').any()), None)
+                    
+                    per_raw = target_df[target_df.index.str.contains('PER')].transpose()
+                    eps_raw = target_df[target_df.index.str.contains('EPS')].transpose()
+                    
+                    combined_data = pd.DataFrame({
+                        'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
+                        'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
+                    }).dropna()
+
+                    combined_data.index = pd.to_datetime(combined_data.index, format='%y.%m.%d')
+                    combined_data['Year'] = combined_data.index.map(lambda x: x.year if x.day > 5 else (x - timedelta(days=5)).year)
+                    combined_data['Quarter'] = combined_data.index.map(lambda x: (x.month-1)//3 + 1 if x.day > 5 else ((x-timedelta(days=5)).month-1)//3 + 1)
+                    combined_data = combined_data.sort_index()
+
+                    # 3. 분기별 테이블 생성 및 예측 로직 적용
+                    fiscal_table = combined_data.pivot(index='Year', columns='Quarter', values='PER')
+                    fiscal_table.columns = [f'Q{int(c)}' for c in fiscal_table.columns]
+                    
+                    curr_price = hist['Close'].iloc[-1]
+                    historical_eps = combined_data['EPS'].tolist()
+                    est = stock.earnings_estimate
+
+                    # 예측치 계산 (Q1, Q2)
+                    if ans1 and est is not None and not est.empty:
+                        curr_q_est = est.loc['0q', 'avg']
+                        t_year_1 = combined_data['Year'].max()
+                        t_q_1 = combined_data[combined_data['Year'] == t_year_1]['Quarter'].max() + 1
+                        if t_q_1 > 4: t_q_1, t_year_1 = 1, t_year_1 + 1
+                        if t_year_1 not in fiscal_table.index: fiscal_table.loc[t_year_1] = [np.nan] * 4
+                        fiscal_table.loc[t_year_1, f'Q{t_q_1}'] = curr_price / (sum(historical_eps[-3:]) + curr_q_est)
+
+                        if ans2:
+                            next_q_est = est.loc['+1q', 'avg']
+                            t_year_2, t_q_2 = t_year_1, t_q_1 + 1
+                            if t_q_2 > 4: t_q_2, t_year_2 = 1, t_year_2 + 1
+                            if t_year_2 not in fiscal_table.index: fiscal_table.loc[t_year_2] = [np.nan] * 4
+                            fiscal_table.loc[t_year_2, f'Q{t_q_2}'] = curr_price / (sum(historical_eps[-2:]) + curr_q_est + next_q_est)
+
+                    # 4. 시각화 (PER Band) - 기존 로직 유지
                     info = stock.info
                     ttm_eps = info.get('trailingEps', 0)
-                    if ttm_eps <= 0:
-                        st.warning("TTM EPS가 0 이하이므로 분석이 불가능합니다.")
+                    per_series = combined_data['PER']
+                    min_p, avg_p, max_p = per_series.min(), per_series.mean(), per_series.max()
+
+                    st.subheader(f"📊 {v5_ticker} 역사적 PER 밴드")
+                    fig, ax = plt.subplots(figsize=(12, 5), facecolor='white')
+                    ax.plot(hist.index, hist['Close'], color='black', label='Actual Price')
+                    ax.plot(hist.index, [ttm_eps * max_p]*len(hist), '--', color='red', alpha=0.5, label=f'Max ({max_p:.1f}x)')
+                    ax.plot(hist.index, [ttm_eps * avg_p]*len(hist), '--', color='green', alpha=0.5, label=f'Avg ({avg_p:.1f}x)')
+                    ax.plot(hist.index, [ttm_eps * min_p]*len(hist), '--', color='blue', alpha=0.5, label=f'Min ({min_p:.1f}x)')
+                    ax.legend()
+                    st.pyplot(fig)
+
+                    # 5. [핵심] 정밀 PER 테이블 및 선택 로직
+                    st.divider()
+                    st.subheader("🗓️ 연도/분기별 정밀 PER 테이블")
+                    st.info("💡 왼쪽 체크박스를 선택하여 원하는 기간의 평균 PER을 산출하세요.")
+
+                    df_aggrid = fiscal_table.sort_index(ascending=False).reset_index().fillna('-')
+                    
+                    gb = GridOptionsBuilder.from_dataframe(df_aggrid)
+                    gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+                    gb.configure_column("Year", pinned='left') # 연도 열 고정
+                    grid_opt = gb.build()
+
+                    grid_res = AgGrid(
+                        df_aggrid,
+                        gridOptions=grid_opt,
+                        update_mode=GridUpdateMode.SELECTION_CHANGED,
+                        theme='streamlit',
+                        height=300
+                    )
+
+                    # 6. 선택된 행 평균 계산 및 출력
+                    selected = grid_res['selected_rows']
+                    if selected is not None and len(selected) > 0:
+                        sel_df = pd.DataFrame(selected)
+                        # Year 제외 수치 데이터만 추출
+                        numeric_vals = pd.to_numeric(sel_df.drop(columns=['Year'], errors='ignore').values.flatten(), errors='coerce')
+                        selected_avg = np.nanmean(numeric_vals)
+                        
+                        col_res1, col_res2 = st.columns(2)
+                        col_res1.metric("선택 기간 평균 PER", f"{selected_avg:.2f}x")
+                        col_res2.metric("현재가 기준 적정가", f"${(ttm_eps * selected_avg):.2f}")
                     else:
-                        # PER 히스토리 계산
-                        url = f"https://www.choicestock.co.kr/search/invest/{v5_ticker}/MRQ"
-                        headers = {'User-Agent': 'Mozilla/5.0'}
-                        resp = requests.get(url, headers=headers)
-                        dfs = pd.read_html(io.StringIO(resp.text))
-                        target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER').any()), None)
-                        
-                        per_series = pd.to_numeric(target_df[target_df.index.str.contains('PER')].transpose().iloc[:, 0], errors='coerce').dropna()
-                        
-                        min_per, avg_per, max_per = per_series.min(), per_series.mean(), per_series.max()
-                        curr_price = hist['Close'].iloc[-1]
-                        
-                        # 시각화
-                        fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
-                        ax.plot(hist.index, hist['Close'], color='black', linewidth=1.5, label='Actual Price')
-                        ax.plot(hist.index, [ttm_eps * max_per]*len(hist), '--', color='red', alpha=0.6, label=f'Upper Band ({max_per:.1f}x)')
-                        ax.plot(hist.index, [ttm_eps * avg_per]*len(hist), '--', color='green', alpha=0.6, label=f'Avg Band ({avg_per:.1f}x)')
-                        ax.plot(hist.index, [ttm_eps * min_per]*len(hist), '--', color='blue', alpha=0.6, label=f'Lower Band ({min_per:.1f}x)')
-                        
-                        ax.set_title(f"[{v5_ticker}] Historical PER Band Analysis", fontsize=14, fontweight='bold')
-                        ax.legend(loc='best')
-                        st.pyplot(fig)
-                        
-                        # 요약 결과
-                        col_a, col_b, col_c = st.columns(3)
-                        col_a.metric("하단 적정가 (Min)", f"${ttm_eps*min_per:.2f}")
-                        col_b.metric("평균 적정가 (Avg)", f"${ttm_eps*avg_per:.2f}")
-                        col_c.metric("상단 적정가 (Max)", f"${ttm_eps*max_per:.2f}")
-                        
-                        curr_per = curr_price / ttm_eps
-                        st.info(f"현재 PER: **{curr_per:.1f}x** | 과거 평균 대비 **{((curr_per/avg_per)-1)*100:+.1f}%** 구간입니다.")
+                        st.warning("계산할 행(연도)을 선택해 주세요.")
+
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
