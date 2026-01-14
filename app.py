@@ -426,20 +426,19 @@ elif main_menu == "개별종목 적정주가 분석 2":
             st.error(f"분석 중 오류 발생: {e}")
 
 # --- 메뉴 3: 개별종목 적정주가 분석 3 ---
-elif main_menu == "개별종목 적정주가 분석 3":
+elif main_menu == \"개별종목 적정주가 분석 3\":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
-            v3_ticker = st.text_input("🏢 티커 입력", "MSFT").upper().strip()
+            v3_ticker = st.text_input(\"🏢 티커 입력\", \"MSFT\").upper().strip()
         with col2:
-            v3_start_year = st.number_input("📅 기준 연도", 2010, 2025, 2017)
+            v3_start_year = st.number_input(\"📅 기준 연도\", 2010, 2025, 2017)
         with col3:
-            v3_predict_mode = st.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True, index=0)
+            v3_predict_mode = st.radio(\"🔮 미래 예측 옵션\", (\"None\", \"현재 분기 예측\", \"다음 분기 예측\"), horizontal=True, index=0)
         
-        v3_selected_metric = st.radio("📈 분석 지표 선택", ("PER 그래프", "PER 테이블"), horizontal=True)
-        v3_analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
+        v3_selected_metric = st.radio(\"📈 분석 지표 선택\", (\"PER 그래프\", \"PER 테이블\"), horizontal=True)
+        v3_analyze_btn = st.button(\"데이터 분석 실행\", type=\"primary\", use_container_width=True)
 
-    # 버튼 클릭 상태 유지를 위해 session_state 사용
     if v3_analyze_btn:
         st.session_state.v3_run = True
         st.session_state.v3_ticker_internal = v3_ticker
@@ -450,7 +449,7 @@ elif main_menu == "개별종목 적정주가 분석 3":
     if st.session_state.get('v3_run'):
         try:
             with st.spinner('데이터를 분석 중입니다...'):
-                url = f"https://www.choicestock.co.kr/search/invest/{st.session_state.v3_ticker_internal}/MRQ"
+                url = f\"https://www.choicestock.co.kr/search/invest/{st.session_state.v3_ticker_internal}/MRQ\"
                 headers = {'User-Agent': 'Mozilla/5.0'}
                 response = requests.get(url, headers=headers)
                 dfs = pd.read_html(io.StringIO(response.text))
@@ -459,8 +458,6 @@ elif main_menu == "개별종목 적정주가 분석 3":
                 if target_df is not None:
                     per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
                     eps_raw = target_df[target_df.index.astype(str).str.contains('EPS')].transpose()
-                    
-                    # 원본 EPS 리스트 추출 (적정주가 계산용)
                     full_eps_list = pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce').dropna().tolist()
 
                     combined = pd.DataFrame({
@@ -474,26 +471,27 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         year = dt.year if dt.day > 5 else (dt - timedelta(days=5)).year
                         month = dt.month if dt.day > 5 else (dt - timedelta(days=5)).month
                         q = (month-1)//3 + 1
-                        return f"{str(year)[2:]}.Q{q}"
+                        return f\"{str(year)[2:]}.Q{q}\"
 
                     combined['Label'] = [get_q_label(d) for d in combined.index]
-                    plot_df = combined[combined.index >= f"{st.session_state.v3_year_internal}-01-01"].copy()
+                    plot_df = combined[combined.index >= f\"{st.session_state.v3_year_internal}-01-01\"].copy()
 
-                    if st.session_state.v3_predict_internal != "None":
+                    if st.session_state.v3_predict_internal != \"None\":
                         stock = yf.Ticker(st.session_state.v3_ticker_internal)
-                        current_price = stock.fast_info.get('last_price', stock.history(period="1d")['Close'].iloc[-1])
+                        current_price = stock.fast_info.get('last_price', stock.history(period=\"1d\")['Close'].iloc[-1])
                         est = stock.earnings_estimate
                         if est is not None and not est.empty:
                             l_lab = plot_df['Label'].iloc[-1]
-                            l_yr, l_q = int("20"+l_lab.split('.')[0]), int(l_lab.split('Q')[1])
+                            l_yr, l_q = int(\"20\"+l_lab.split('.')[0]), int(l_lab.split('Q')[1])
                             c_q_est = est.loc['0q', 'avg']
                             t1_q, t1_yr = (l_q+1, l_yr) if l_q < 4 else (1, l_yr+1)
-                            plot_df.loc[pd.Timestamp(f"{t1_yr}-{(t1_q-1)*3+1}-01")] = [current_price/(sum(full_eps_list[-3:]) + c_q_est), np.nan, f"{str(t1_yr)[2:]}.Q{t1_q}(E)"]
-                            if st.session_state.v3_predict_internal == "다음 분기 예측":
+                            plot_df.loc[pd.Timestamp(f\"{t1_yr}-{(t1_q-1)*3+1}-01\")] = [current_price/(sum(full_eps_list[-3:]) + c_q_est), np.nan, f\"{str(t1_yr)[2:]}.Q{t1_q}(E)\"]
+                            if st.session_state.v3_predict_internal == \"다음 분기 예측\":
                                 t2_q, t2_yr = (t1_q+1, t1_yr) if t1_q < 4 else (1, t1_yr+1)
-                                plot_df.loc[pd.Timestamp(f"{t2_yr}-{(t2_q-1)*3+1}-01")] = [current_price/(sum(full_eps_list[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, f"{str(t2_yr)[2:]}.Q{t2_q}(E)"]
+                                plot_df.loc[pd.Timestamp(f\"{t2_yr}-{(t2_q-1)*3+1}-01\")] = [current_price/(sum(full_eps_list[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, f\"{str(t2_yr)[2:]}.Q{t2_q}(E)\"]
 
-                    if st.session_state.v3_metric_internal == "PER 그래프":
+                    if st.session_state.v3_metric_internal == \"PER 그래프\":
+                        # (그래프 로직 유지)
                         avg_per = plot_df['PER'].mean()
                         median_per = plot_df['PER'].median()
                         max_p, min_p = plot_df['PER'].max(), plot_df['PER'].min()
@@ -504,68 +502,67 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         ax.axhline(median_per, color='#8e44ad', linestyle='-.', linewidth=1.5, zorder=2, label=f'Median: {median_per:.1f}')
                         h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
                         ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
-                        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, shadow=True)
-                        apply_strong_style(ax, f"[{st.session_state.v3_ticker_internal}] PER Valuation Trend", "PER Ratio")
+                        apply_strong_style(ax, f\"[{st.session_state.v3_ticker_internal}] PER Valuation Trend\", \"PER Ratio\")
                         ax.set_xticks(x_idx); ax.set_xticklabels(plot_df['Label'], rotation=45)
-                        for i, (idx, row) in enumerate(plot_df.iterrows()):
-                            if "(E)" in str(row['Label']):
-                                ax.axvspan(i-0.4, i+0.4, color='#fff9c4', alpha=0.7)
-                                ax.text(i, row['PER'] + (h_rng*0.08), f"{row['PER']:.1f}", ha='center', color='#d35400', fontweight='bold')
                         st.pyplot(fig)
                     
                     else: # PER 테이블
-                        st.subheader(f"📊 {st.session_state.v3_ticker_internal} 연도별/분기별 PER 분석")
+                        st.subheader(f\"📊 {st.session_state.v3_ticker_internal} 분석 테이블\")
                         table_df_tmp = plot_df[['Label', 'PER']].copy()
-                        table_df_tmp['Year'] = table_df_tmp['Label'].apply(lambda x: "20" + x.split('.')[0])
+                        table_df_tmp['Year'] = table_df_tmp['Label'].apply(lambda x: \"20\" + x.split('.')[0])
                         table_df_tmp['Quarter'] = table_df_tmp['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
                         pivot_df = table_df_tmp.pivot(index='Year', columns='Quarter', values='PER')
                         pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
 
-                        # 사용자 선택 모드 제어
                         if 'v3_sel_mode' not in st.session_state: st.session_state.v3_sel_mode = False
                         
                         col_btn1, col_btn2, col_btn3 = st.columns(3)
                         with col_btn1:
-                            if st.button("사용자 선택 PER", use_container_width=True):
+                            if st.button(\"사용자 선택 PER\", use_container_width=True):
                                 st.session_state.v3_sel_mode = not st.session_state.v3_sel_mode
                                 st.rerun()
 
                         if st.session_state.v3_sel_mode:
-                            st.info("💡 평균 계산에 포함할 PER 값을 클릭하여 수정하거나 선택하세요.")
+                            st.info(\"💡 계산에 포함할 셀의 값을 클릭하여 '확인'을 누르거나 값을 유지하세요. (수정된 셀이 계산 대상입니다)\")
+                            
+                            # 에디터 출력
                             edited_df = st.data_editor(pivot_df, use_container_width=False, width=600)
                             
+                            # 어떤 값이 선택되었는지 시각적으로 보여줌
+                            diff = (pivot_df != edited_df) & ~(pivot_df.isna() & edited_df.isna())
+                            selected_indices = np.where(diff)
+                            selected_values = edited_df.values[selected_indices]
+                            
+                            if len(selected_values) > 0:
+                                st.write(f\"✅ **현재 선택된 값:** {list(np.round(selected_values, 2))}\")
+
                             with col_btn2:
-                                if st.button("평균값 계산", use_container_width=True):
-                                    vals = edited_df.values.flatten()
-                                    valid_vals = vals[~np.isnan(vals)]
-                                    if len(valid_vals) > 0:
-                                        st.session_state.v3_avg_res = np.mean(valid_vals)
-                                        st.success(f"평균 PER: {st.session_state.v3_avg_res:.2f}")
-                                    else: st.warning("선택된 값이 없습니다.")
+                                if st.button(\"평균값 계산\", use_container_width=True):
+                                    # 변경된 셀이 있다면 해당 셀들만 평균, 없다면 전체 평균
+                                    if len(selected_values) > 0:
+                                        st.session_state.v3_avg_res = np.mean(selected_values)
+                                    else:
+                                        vals = edited_df.values.flatten()
+                                        st.session_state.v3_avg_res = np.mean(vals[~np.isnan(vals)])
+                                    st.success(f\"평균 PER: {st.session_state.v3_avg_res:.2f}\")
                             
                             with col_btn3:
-                                if st.button("적정주가 계산", use_container_width=True, type="primary"):
+                                if st.button(\"적정주가 계산\", use_container_width=True, type=\"primary\"):
                                     if 'v3_avg_res' in st.session_state:
                                         stock_obj = yf.Ticker(st.session_state.v3_ticker_internal)
                                         est_data = stock_obj.earnings_estimate
-                                        
-                                        if st.session_state.v3_predict_internal == "None":
-                                            sum_eps = sum(full_eps_list[-4:])
-                                        elif st.session_state.v3_predict_internal == "현재 분기 예측" and est_data is not None:
-                                            sum_eps = sum(full_eps_list[-3:]) + est_data.loc['0q', 'avg']
-                                        elif st.session_state.v3_predict_internal == "다음 분기 예측" and est_data is not None:
-                                            sum_eps = sum(full_eps_list[-2:]) + est_data.loc['0q', 'avg'] + est_data.loc['+1q', 'avg']
+                                        if st.session_state.v3_predict_internal == \"None\": sum_eps = sum(full_eps_list[-4:])
+                                        elif st.session_state.v3_predict_internal == \"현재 분기 예측\": sum_eps = sum(full_eps_list[-3:]) + est_data.loc['0q', 'avg']
+                                        elif st.session_state.v3_predict_internal == \"다음 분기 예측\": sum_eps = sum(full_eps_list[-2:]) + est_data.loc['0q', 'avg'] + est_data.loc['+1q', 'avg']
                                         else: sum_eps = sum(full_eps_list[-4:])
                                         
                                         fair_v = st.session_state.v3_avg_res * sum_eps
-                                        st.metric("계산된 적정주가", f"${fair_v:.2f}")
-                                    else: st.error("먼저 평균값을 계산해 주세요.")
+                                        st.metric(\"계산된 적정주가\", f\"${fair_v:.2f}\")
+                                    else: st.error(\"먼저 평균값을 계산해 주세요.\")
                         else:
                             st.table(pivot_df.style.format(precision=2, na_rep='-'))
-                            st.caption("상단 버튼을 눌러 선택 모드로 전환하세요.")
-
-                else: st.warning("데이터 수집 실패")
-        except Exception as e: st.error(f"오류: {e}")
+                else: st.warning(\"데이터 수집 실패\")
+        except Exception as e: st.error(f\"오류: {e}\")
 
 
 # --- 메뉴 4: 개별종목 적정주가 분석 4 ---
