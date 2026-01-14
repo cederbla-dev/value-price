@@ -425,7 +425,8 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨) ---
+
+# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨: PER 선택 및 계산 기능 추가) ---
 elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
@@ -489,7 +490,6 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         median_per = plot_df['PER'].median()
                         max_p, min_p = plot_df['PER'].max(), plot_df['PER'].min()
 
-                        # [수정] 그래프 크기 변경 (12, 6.5 -> 9.6, 4.8)
                         fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
                         x_idx = range(len(plot_df))
                         ax.plot(x_idx, plot_df['PER'], marker='o', color='#34495e', linewidth=2.5, zorder=4, label='Forward PER')
@@ -499,7 +499,6 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
                         ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
 
-                        # [수정] 범례 위치 그래프 밖 우측 상단으로 이동 (bbox_to_anchor 추가)
                         leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, shadow=True)
                         leg.get_frame().set_facecolor('white')
                         for text in leg.get_texts(): text.set_color('black')
@@ -514,8 +513,8 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         
                         st.pyplot(fig)
                     
-                    else: # PER 테이블
-                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 데이터 리스트")
+                    else: # PER 테이블 (수정 구간)
+                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 데이터 선택")
                         table_df = plot_df[['Label', 'PER']].copy()
                         table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
                         table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
@@ -524,19 +523,62 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         pivot_df.index.name = 'Year'
                         pivot_df = pivot_df.reset_index()
 
-                        table_html = pivot_df.style.format(precision=2, na_rep='-')\
-                            .hide(axis='index')\
-                            .set_table_attributes('style="width: 40%; border-collapse: collapse; border: 1px solid #ddd; font-size: 14px;"')\
-                            .set_table_styles([
-                                {'selector': 'th', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('background-color', '#f8f9fa'), ('text-align', 'center'), ('font-weight', 'bold')]},
-                                {'selector': 'td', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('text-align', 'center')]}
-                            ]).to_html()
+                        # --- 새로운 기능 추가 시작 ---
+                        st.info("💡 아래 테이블에서 계산에 포함할 PER 값들을 마우스로 선택(드래그 또는 클릭)하세요.")
                         
-                        st.write(table_html, unsafe_allow_html=True)
-                        st.info("💡 위 테이블의 데이터를 바탕으로 향후 상세 분석 기능을 추가할 예정입니다.")
+                        # (1) PER 선택 인터페이스 (on_select='rerun'을 통해 선택 즉시 데이터 획득)
+                        event = st.dataframe(
+                            pivot_df,
+                            use_container_width=False,
+                            width=500,
+                            hide_index=True,
+                            on_select="rerun",
+                            selection_mode="multiple_cells"
+                        )
+
+                        # 선택된 셀 데이터 추출
+                        selected_cells = event.selection.get("cells", [])
+                        
+                        if selected_cells:
+                            selected_values = []
+                            for cell in selected_cells:
+                                val = pivot_df.iloc[cell['row'], cell['column']]
+                                if pd.notna(val) and isinstance(val, (int, float)):
+                                    selected_values.append(val)
+                            
+                            if selected_values:
+                                col_calc1, col_calc2, col_calc3 = st.columns(3)
+                                
+                                # (2) 평균 구하기
+                                avg_selected_per = np.mean(selected_values)
+                                col_calc1.metric("선택된 PER 평균", f"{avg_selected_per:.2f}x")
+                                
+                                # (3) EPS 합 구하기 및 적정주가 계산
+                                # 기업 가치 비교 (PER/EPS) 메뉴의 EPS 합산 로직 참고
+                                eps_df_raw = fetch_eps_data(v3_ticker, v3_predict_mode)
+                                if not eps_df_raw.empty:
+                                    t_col = [c for c in eps_df_raw.columns if c != 'type'][0]
+                                    # 최근 4개 분기 추출
+                                    recent_eps_data = eps_df_raw.tail(4)
+                                    sum_eps = recent_eps_data[t_col].sum()
+                                    
+                                    col_calc2.metric("최근 4Q EPS 합", f"${sum_eps:.2f}")
+                                    
+                                    # (4) 적정주가 계산
+                                    fair_price_calc = avg_selected_per * sum_eps
+                                    col_calc3.metric("계산된 적정주가", f"${fair_price_calc:.2f}")
+                                    
+                                    st.success(f"✅ **계산 근거**: 평균 PER({avg_selected_per:.2f}x) × 4Q EPS합(${sum_eps:.2f}) = **${fair_price_calc:.2f}**")
+                                else:
+                                    st.warning("EPS 데이터를 불러올 수 없어 적정주가 계산이 불가합니다.")
+                        else:
+                            st.write("표에서 셀을 선택하면 평균 PER과 적정주가가 실시간으로 계산됩니다.")
+                        # --- 새로운 기능 추가 끝 ---
 
                 else: st.warning("데이터 수집 실패")
         except Exception as e: st.error(f"오류: {e}")
+
+
 
 # --- 메뉴 4: 개별종목 적정주가 분석 4 ---
 elif main_menu == "개별종목 적정주가 분석 4":
