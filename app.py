@@ -425,8 +425,7 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-
-# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨: 버튼 방식 및 에러 해결) ---
+# --- 메뉴 3: 개별종목 적정주가 분석 3 (상태 유지 및 테이블 상시 표시 버전) ---
 elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
@@ -440,6 +439,15 @@ elif main_menu == "개별종목 적정주가 분석 3":
         v3_selected_metric = st.radio("📈 분석 지표 선택", ("PER 그래프", "PER 테이블"), horizontal=True)
         v3_analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
 
+    # 1. 세션 상태(Session State) 초기화 (데이터가 날아가지 않게 저장하는 공간)
+    if "v3_data_loaded" not in st.session_state:
+        st.session_state.v3_data_loaded = False
+    if "v3_pivot_df" not in st.session_state:
+        st.session_state.v3_pivot_df = None
+    if "v3_plot_df" not in st.session_state:
+        st.session_state.v3_plot_df = None
+
+    # 2. 분석 실행 버튼 클릭 시 데이터 수집 및 가공
     if v3_analyze_btn and v3_ticker:
         try:
             with st.spinner('데이터를 분석 중입니다...'):
@@ -485,111 +493,92 @@ elif main_menu == "개별종목 적정주가 분석 3":
                                 t2_q, t2_yr = (t1_q+1, t1_yr) if t1_q < 4 else (1, t1_yr+1)
                                 plot_df.loc[pd.Timestamp(f"{t2_yr}-{(t2_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, f"{str(t2_yr)[2:]}.Q{t2_q}(E)"]
 
-                    if v3_selected_metric == "PER 그래프":
-                        avg_per = plot_df['PER'].mean()
-                        median_per = plot_df['PER'].median()
-                        max_p, min_p = plot_df['PER'].max(), plot_df['PER'].min()
+                    # 테이블용 피벗 데이터 생성
+                    table_df = plot_df[['Label', 'PER']].copy()
+                    table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
+                    table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
+                    pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
+                    pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4']).reset_index()
 
-                        fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
-                        x_idx = range(len(plot_df))
-                        ax.plot(x_idx, plot_df['PER'], marker='o', color='#34495e', linewidth=2.5, zorder=4, label='Forward PER')
-                        ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, zorder=2, label=f'Average: {avg_per:.1f}')
-                        ax.axhline(median_per, color='#8e44ad', linestyle='-.', linewidth=1.5, zorder=2, label=f'Median: {median_per:.1f}')
-                        
-                        h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
-                        ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
+                    # 세션에 저장
+                    st.session_state.v3_plot_df = plot_df
+                    st.session_state.v3_pivot_df = pivot_df
+                    st.session_state.v3_data_loaded = True
+                else:
+                    st.warning("데이터 수집 실패")
+        except Exception as e:
+            st.error(f"오류: {e}")
 
-                        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, shadow=True)
-                        leg.get_frame().set_facecolor('white')
-                        for text in leg.get_texts(): text.set_color('black')
+    # 3. 데이터가 로드된 상태라면 화면에 계속 표시
+    if st.session_state.v3_data_loaded:
+        if v3_selected_metric == "PER 그래프":
+            df = st.session_state.v3_plot_df
+            avg_per = df['PER'].mean()
+            median_per = df['PER'].median()
+            max_p, min_p = df['PER'].max(), df['PER'].min()
 
-                        apply_strong_style(ax, f"[{v3_ticker}] PER Valuation Trend", "PER Ratio")
-                        ax.set_xticks(x_idx); ax.set_xticklabels(plot_df['Label'], rotation=45)
-                        
-                        for i, (idx, row) in enumerate(plot_df.iterrows()):
-                            if "(E)" in str(row['Label']):
-                                ax.axvspan(i-0.4, i+0.4, color='#fff9c4', alpha=0.7)
-                                ax.text(i, row['PER'] + (h_rng*0.08), f"{row['PER']:.1f}", ha='center', color='#d35400', fontweight='bold')
-                        
-                        st.pyplot(fig)
-                    
-                    else: # PER 테이블 (기능 수정)
-                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 분석 테이블")
-                        
-                        table_df = plot_df[['Label', 'PER']].copy()
-                        table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
-                        table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
-                        pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
-                        pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
-                        pivot_df.index.name = 'Year'
-                        pivot_df = pivot_df.reset_index()
+            fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
+            x_idx = range(len(df))
+            ax.plot(x_idx, df['PER'], marker='o', color='#34495e', linewidth=2.5, zorder=4, label='Forward PER')
+            ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, zorder=2, label=f'Average: {avg_per:.1f}')
+            ax.axhline(median_per, color='#8e44ad', linestyle='-.', linewidth=1.5, zorder=2, label=f'Median: {median_per:.1f}')
+            
+            h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
+            ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
+            leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, shadow=True)
+            apply_strong_style(ax, f"[{v3_ticker}] PER Valuation Trend", "PER Ratio")
+            ax.set_xticks(x_idx); ax.set_xticklabels(df['Label'], rotation=45)
+            st.pyplot(fig)
+        
+        else: # PER 테이블 모드
+            st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 분석 테이블")
+            st.info("💡 (1) 표의 셀을 마우스로 드래그하거나 선택하세요. (2) 아래 '평균 구하기' 버튼을 누르세요.")
+            
+            # 테이블 표시 및 선택 이벤트 감지
+            event = st.dataframe(
+                st.session_state.v3_pivot_df,
+                use_container_width=False,
+                width=500,
+                hide_index=True,
+                on_select="rerun", # 선택 시 즉시 리런하여 상태 업데이트
+                selection_mode="multi-cell"
+            )
 
-                        # --- 새로운 기능 로직 시작 ---
-                        st.info("💡 (1) 'PER 선택' 버튼을 클릭한 상태에서 표의 셀을 선택하세요. (2) '평균 구하기' -> (3) '적정주가' 순으로 클릭하세요.")
-                        
-                        col_btn1, col_btn2, col_btn3 = st.columns(3)
-                        sel_mode = col_btn1.button("1️⃣ PER 선택 활성화", use_container_width=True)
-                        calc_avg = col_btn2.button("2️⃣ 평균 구하기", use_container_width=True)
-                        calc_fair = col_btn3.button("3️⃣ 적정주가 계산", use_container_width=True)
+            # 선택된 셀 데이터 추출
+            selected_indices = event.selection.get("cells", [])
+            selected_values = []
+            for cell in selected_indices:
+                val = st.session_state.v3_pivot_df.iloc[cell['row'], cell['column']]
+                if pd.notna(val) and isinstance(val, (int, float)):
+                    selected_values.append(val)
 
-                        # 에러 해결: selection_mode="multi-cell" 사용
-                        event = st.dataframe(
-                            pivot_df,
-                            use_container_width=False,
-                            width=500,
-                            hide_index=True,
-                            on_select="rerun",
-                            selection_mode="multi-cell"
-                        )
+            # 계산 및 결과 UI
+            col_calc1, col_calc2 = st.columns(2)
+            
+            with col_calc1:
+                if st.button("2️⃣ 선택 영역 평균 구하기", use_container_width=True):
+                    if selected_values:
+                        st.session_state.v3_mean_per = np.mean(selected_values)
+                        st.success(f"📈 선택 평균 PER: {st.session_state.v3_mean_per:.2f}x")
+                    else:
+                        st.warning("표에서 숫자 셀을 먼저 선택해주세요.")
 
-                        selected_cells = event.selection.get("cells", [])
-                        
-                        # 선택된 값 저장용 세션 스테이트 (버튼 동작 연동을 위해)
-                        if "selected_per_values" not in st.session_state:
-                            st.session_state.selected_per_values = []
-                        if "mean_per" not in st.session_state:
-                            st.session_state.mean_per = 0.0
+            with col_calc2:
+                if st.button("3️⃣ 적정주가 계산", use_container_width=True):
+                    if "v3_mean_per" in st.session_state:
+                        # 최신 4개 분기 EPS 합산 (가장 하단의 fetch_eps_data 활용)
+                        eps_df = fetch_eps_data(v3_ticker, v3_predict_mode)
+                        if not eps_df.empty:
+                            t_col = [c for c in eps_df.columns if c != 'type'][0]
+                            sum_eps = eps_df[t_col].tail(4).sum()
+                            fair_p = st.session_state.v3_mean_per * sum_eps
+                            st.metric("최종 산출 적정주가", f"${fair_p:.2f}", help="선택 PER 평균 * 최근 4분기 EPS 합")
+                            st.balloons()
+                    else:
+                        st.warning("평균 구하기를 먼저 실행해주세요.")
 
-                        if selected_cells:
-                            current_selected = []
-                            for cell in selected_cells:
-                                val = pivot_df.iloc[cell['row'], cell['column']]
-                                if pd.notna(val):
-                                    current_selected.append(val)
-                            st.session_state.selected_per_values = current_selected
-                            st.write(f"현재 선택된 PER 개수: {len(current_selected)}개")
-
-                        if calc_avg:
-                            if st.session_state.selected_per_values:
-                                st.session_state.mean_per = np.mean(st.session_state.selected_per_values)
-                                st.success(f"📈 선택된 PER의 평균: {st.session_state.mean_per:.2f}x")
-                            else:
-                                st.warning("표에서 PER 값을 먼저 선택해주세요.")
-
-                        if calc_fair:
-                            if st.session_state.mean_per > 0:
-                                # 최근 4분기 EPS 합산 (기업가치 비교 메뉴 로직과 동일)
-                                eps_data = fetch_eps_data(v3_ticker, v3_predict_mode)
-                                if not eps_data.empty:
-                                    t_col = [c for c in eps_data.columns if c != 'type'][0]
-                                    sum_eps_4q = eps_data[t_col].tail(4).sum()
-                                    fair_price = st.session_state.mean_per * sum_eps_4q
-                                    
-                                    st.divider()
-                                    c1, c2, c3 = st.columns(3)
-                                    c1.metric("적용 평균 PER", f"{st.session_state.mean_per:.2f}x")
-                                    c2.metric("최근 4Q EPS 합", f"${sum_eps_4q:.2f}")
-                                    c3.metric("최종 적정주가", f"${fair_price:.2f}")
-                                    st.balloons()
-                                else:
-                                    st.error("EPS 데이터를 가져올 수 없습니다.")
-                            else:
-                                st.warning("먼저 '평균 구하기' 버튼을 눌러주세요.")
-                        # --- 새로운 기능 로직 끝 ---
-
-                else: st.warning("데이터 수집 실패")
-        except Exception as e: st.error(f"오류: {e}")
-
+            if selected_values:
+                st.write(f"현재 선택된 PER 값들: {', '.join([f'{v:.2f}' for v in selected_values])}")
 
 
 
