@@ -426,7 +426,7 @@ elif main_menu == "개별종목 적정주가 분석 2":
             st.error(f"분석 중 오류 발생: {e}")
 
 # --- 메뉴 3: 개별종목 적정주가 분석 3 ---
-elif main_menu == \"개별종목 적정주가 분석 3\":
+elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
