@@ -426,7 +426,7 @@ elif main_menu == "개별종목 적정주가 분석 2":
             st.error(f"분석 중 오류 발생: {e}")
 
 
-# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨: PER 선택 및 계산 기능 추가) ---
+# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨: 버튼 방식 및 에러 해결) ---
 elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
@@ -513,8 +513,9 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         
                         st.pyplot(fig)
                     
-                    else: # PER 테이블 (수정 구간)
-                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 데이터 선택")
+                    else: # PER 테이블 (기능 수정)
+                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 분석 테이블")
+                        
                         table_df = plot_df[['Label', 'PER']].copy()
                         table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
                         table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
@@ -523,60 +524,72 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         pivot_df.index.name = 'Year'
                         pivot_df = pivot_df.reset_index()
 
-                        # --- 새로운 기능 추가 시작 ---
-                        st.info("💡 아래 테이블에서 계산에 포함할 PER 값들을 마우스로 선택(드래그 또는 클릭)하세요.")
+                        # --- 새로운 기능 로직 시작 ---
+                        st.info("💡 (1) 'PER 선택' 버튼을 클릭한 상태에서 표의 셀을 선택하세요. (2) '평균 구하기' -> (3) '적정주가' 순으로 클릭하세요.")
                         
-                        # (1) PER 선택 인터페이스 (on_select='rerun'을 통해 선택 즉시 데이터 획득)
+                        col_btn1, col_btn2, col_btn3 = st.columns(3)
+                        sel_mode = col_btn1.button("1️⃣ PER 선택 활성화", use_container_width=True)
+                        calc_avg = col_btn2.button("2️⃣ 평균 구하기", use_container_width=True)
+                        calc_fair = col_btn3.button("3️⃣ 적정주가 계산", use_container_width=True)
+
+                        # 에러 해결: selection_mode="multi-cell" 사용
                         event = st.dataframe(
                             pivot_df,
                             use_container_width=False,
                             width=500,
                             hide_index=True,
                             on_select="rerun",
-                            selection_mode="multiple_cells"
+                            selection_mode="multi-cell"
                         )
 
-                        # 선택된 셀 데이터 추출
                         selected_cells = event.selection.get("cells", [])
                         
+                        # 선택된 값 저장용 세션 스테이트 (버튼 동작 연동을 위해)
+                        if "selected_per_values" not in st.session_state:
+                            st.session_state.selected_per_values = []
+                        if "mean_per" not in st.session_state:
+                            st.session_state.mean_per = 0.0
+
                         if selected_cells:
-                            selected_values = []
+                            current_selected = []
                             for cell in selected_cells:
                                 val = pivot_df.iloc[cell['row'], cell['column']]
-                                if pd.notna(val) and isinstance(val, (int, float)):
-                                    selected_values.append(val)
-                            
-                            if selected_values:
-                                col_calc1, col_calc2, col_calc3 = st.columns(3)
-                                
-                                # (2) 평균 구하기
-                                avg_selected_per = np.mean(selected_values)
-                                col_calc1.metric("선택된 PER 평균", f"{avg_selected_per:.2f}x")
-                                
-                                # (3) EPS 합 구하기 및 적정주가 계산
-                                # 기업 가치 비교 (PER/EPS) 메뉴의 EPS 합산 로직 참고
-                                eps_df_raw = fetch_eps_data(v3_ticker, v3_predict_mode)
-                                if not eps_df_raw.empty:
-                                    t_col = [c for c in eps_df_raw.columns if c != 'type'][0]
-                                    # 최근 4개 분기 추출
-                                    recent_eps_data = eps_df_raw.tail(4)
-                                    sum_eps = recent_eps_data[t_col].sum()
+                                if pd.notna(val):
+                                    current_selected.append(val)
+                            st.session_state.selected_per_values = current_selected
+                            st.write(f"현재 선택된 PER 개수: {len(current_selected)}개")
+
+                        if calc_avg:
+                            if st.session_state.selected_per_values:
+                                st.session_state.mean_per = np.mean(st.session_state.selected_per_values)
+                                st.success(f"📈 선택된 PER의 평균: {st.session_state.mean_per:.2f}x")
+                            else:
+                                st.warning("표에서 PER 값을 먼저 선택해주세요.")
+
+                        if calc_fair:
+                            if st.session_state.mean_per > 0:
+                                # 최근 4분기 EPS 합산 (기업가치 비교 메뉴 로직과 동일)
+                                eps_data = fetch_eps_data(v3_ticker, v3_predict_mode)
+                                if not eps_data.empty:
+                                    t_col = [c for c in eps_data.columns if c != 'type'][0]
+                                    sum_eps_4q = eps_data[t_col].tail(4).sum()
+                                    fair_price = st.session_state.mean_per * sum_eps_4q
                                     
-                                    col_calc2.metric("최근 4Q EPS 합", f"${sum_eps:.2f}")
-                                    
-                                    # (4) 적정주가 계산
-                                    fair_price_calc = avg_selected_per * sum_eps
-                                    col_calc3.metric("계산된 적정주가", f"${fair_price_calc:.2f}")
-                                    
-                                    st.success(f"✅ **계산 근거**: 평균 PER({avg_selected_per:.2f}x) × 4Q EPS합(${sum_eps:.2f}) = **${fair_price_calc:.2f}**")
+                                    st.divider()
+                                    c1, c2, c3 = st.columns(3)
+                                    c1.metric("적용 평균 PER", f"{st.session_state.mean_per:.2f}x")
+                                    c2.metric("최근 4Q EPS 합", f"${sum_eps_4q:.2f}")
+                                    c3.metric("최종 적정주가", f"${fair_price:.2f}")
+                                    st.balloons()
                                 else:
-                                    st.warning("EPS 데이터를 불러올 수 없어 적정주가 계산이 불가합니다.")
-                        else:
-                            st.write("표에서 셀을 선택하면 평균 PER과 적정주가가 실시간으로 계산됩니다.")
-                        # --- 새로운 기능 추가 끝 ---
+                                    st.error("EPS 데이터를 가져올 수 없습니다.")
+                            else:
+                                st.warning("먼저 '평균 구하기' 버튼을 눌러주세요.")
+                        # --- 새로운 기능 로직 끝 ---
 
                 else: st.warning("데이터 수집 실패")
         except Exception as e: st.error(f"오류: {e}")
+
 
 
 
