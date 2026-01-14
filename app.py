@@ -425,9 +425,8 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-# --- 메뉴 3: 개별종목 적정주가 분석 3 (UI 개편 완료) ---
+# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨) ---
 elif main_menu == "개별종목 적정주가 분석 3":
-    # 상단 옵션 레이아웃 (기업 가치 비교 메뉴와 동일하게 구성)
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
@@ -437,14 +436,12 @@ elif main_menu == "개별종목 적정주가 분석 3":
         with col3:
             v3_predict_mode = st.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True, index=0)
         
-        # 분석 지표 선택 (PER 그래프 / PER 테이블)
         v3_selected_metric = st.radio("📈 분석 지표 선택", ("PER 그래프", "PER 테이블"), horizontal=True)
         v3_analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
 
     if v3_analyze_btn and v3_ticker:
         try:
             with st.spinner('데이터를 분석 중입니다...'):
-                # 데이터 수집 (PER 데이터 재사용)
                 url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
                 headers = {'User-Agent': 'Mozilla/5.0'}
                 response = requests.get(url, headers=headers)
@@ -470,7 +467,6 @@ elif main_menu == "개별종목 적정주가 분석 3":
                     combined['Label'] = [get_q_label(d) for d in combined.index]
                     plot_df = combined[combined.index >= f"{v3_start_year}-01-01"].copy()
 
-                    # 미래 예측 계산
                     if v3_predict_mode != "None":
                         stock = yf.Ticker(v3_ticker)
                         current_price = stock.fast_info.get('last_price', stock.history(period="1d")['Close'].iloc[-1])
@@ -480,23 +476,21 @@ elif main_menu == "개별종목 적정주가 분석 3":
                             l_lab = plot_df['Label'].iloc[-1]
                             l_yr, l_q = int("20"+l_lab.split('.')[0]), int(l_lab.split('Q')[1])
                             
-                            # 현재 분기 예측
                             c_q_est = est.loc['0q', 'avg']
                             t1_q, t1_yr = (l_q+1, l_yr) if l_q < 4 else (1, l_yr+1)
                             plot_df.loc[pd.Timestamp(f"{t1_yr}-{(t1_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-3:]) + c_q_est), np.nan, f"{str(t1_yr)[2:]}.Q{t1_q}(E)"]
 
-                            # 다음 분기 예측
                             if v3_predict_mode == "다음 분기 예측":
                                 t2_q, t2_yr = (t1_q+1, t1_yr) if t1_q < 4 else (1, t1_yr+1)
                                 plot_df.loc[pd.Timestamp(f"{t2_yr}-{(t2_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, f"{str(t2_yr)[2:]}.Q{t2_q}(E)"]
 
-                    # --- 결과 출력 ---
                     if v3_selected_metric == "PER 그래프":
                         avg_per = plot_df['PER'].mean()
                         median_per = plot_df['PER'].median()
                         max_p, min_p = plot_df['PER'].max(), plot_df['PER'].min()
 
-                        fig, ax = plt.subplots(figsize=(12, 6.5), facecolor='white')
+                        # [수정] 그래프 크기 변경 (12, 6.5 -> 9.6, 4.8)
+                        fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
                         x_idx = range(len(plot_df))
                         ax.plot(x_idx, plot_df['PER'], marker='o', color='#34495e', linewidth=2.5, zorder=4, label='Forward PER')
                         ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, zorder=2, label=f'Average: {avg_per:.1f}')
@@ -505,14 +499,14 @@ elif main_menu == "개별종목 적정주가 분석 3":
                         h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
                         ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
 
-                        leg = ax.legend(loc='upper left', frameon=True, shadow=True)
+                        # [수정] 범례 위치 그래프 밖 우측 상단으로 이동 (bbox_to_anchor 추가)
+                        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, shadow=True)
                         leg.get_frame().set_facecolor('white')
                         for text in leg.get_texts(): text.set_color('black')
 
                         apply_strong_style(ax, f"[{v3_ticker}] PER Valuation Trend", "PER Ratio")
                         ax.set_xticks(x_idx); ax.set_xticklabels(plot_df['Label'], rotation=45)
                         
-                        # 미래 구간 하이라이트
                         for i, (idx, row) in enumerate(plot_df.iterrows()):
                             if "(E)" in str(row['Label']):
                                 ax.axvspan(i-0.4, i+0.4, color='#fff9c4', alpha=0.7)
@@ -522,22 +516,14 @@ elif main_menu == "개별종목 적정주가 분석 3":
                     
                     else: # PER 테이블
                         st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 데이터 리스트")
-                        
-                        # 1. 데이터 재구성 (Label에서 연도와 분기 추출)
                         table_df = plot_df[['Label', 'PER']].copy()
-                        # Label 형식(예: '17.Q1')에서 연도('2017')와 분기('Q1') 추출
                         table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
                         table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
-                        
-                        # 2. 피벗 테이블 생성 (행: 연도, 열: 분기)
                         pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
-                        # 컬럼 순서 보장 (Q1, Q2, Q3, Q4)
                         pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
-                        # 인덱스 이름 제거 및 데이터프레임 정리
                         pivot_df.index.name = 'Year'
                         pivot_df = pivot_df.reset_index()
 
-                        # 3. HTML/CSS를 이용한 스타일링 (너비 40%, 모든 테두리)
                         table_html = pivot_df.style.format(precision=2, na_rep='-')\
                             .hide(axis='index')\
                             .set_table_attributes('style="width: 40%; border-collapse: collapse; border: 1px solid #ddd; font-size: 14px;"')\
@@ -547,7 +533,6 @@ elif main_menu == "개별종목 적정주가 분석 3":
                             ]).to_html()
                         
                         st.write(table_html, unsafe_allow_html=True)
-                        
                         st.info("💡 위 테이블의 데이터를 바탕으로 향후 상세 분석 기능을 추가할 예정입니다.")
 
                 else: st.warning("데이터 수집 실패")
