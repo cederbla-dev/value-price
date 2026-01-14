@@ -232,8 +232,8 @@ if main_menu == "개별종목 적정주가 분석 1":
                         "상태": status
                     })
 
-                    # 그래프 시각화 설정
-                    fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
+                    # 그래프 시각화 설정 (수정됨: 사이즈 축소 9.6, 4.8)
+                    fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
                     
                     # 1. Price 라인 (파란색)
                     ax.plot(df_plot.index, df_plot['Close'], color='#1f77b4', 
@@ -251,9 +251,10 @@ if main_menu == "개별종목 적정주가 분석 1":
                     apply_strong_style(ax, f"Base Year: {base_year} (Gap: {gap_pct:+.1f}%)", "Price ($)")
                     plt.xticks(rotation=45)
                     
-                    # --- [범례 커스텀 수정] 배경 흰색 및 글자색 지정 ---
+                    # --- [범례 커스텀 수정] 위치 외부로 변경 (bbox_to_anchor) ---
                     leg = ax.legend(
                         loc='upper left', 
+                        bbox_to_anchor=(1.02, 1), # 그래프 밖 우측 상단으로 이동
                         fontsize=11, 
                         frameon=True, 
                         facecolor='white',  # 범례 내부 배경색 흰색
