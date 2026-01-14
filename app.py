@@ -105,4 +105,50 @@ if run and ticker:
     data["Q"] = data["Quarter"].str[-2:]
 
     pivot = data.pivot(index="Year", columns="Q", values="PER")
-    pivot = pivot.reindex(columns=["Q]()
+    pivot = pivot.reindex(columns=["Q1", "Q2", "Q3", "Q4"])
+
+    st.subheader("📋 PER 테이블 (연도별 체크 선택)")
+    st.caption("✔ 체크한 연도의 모든 분기 PER이 계산에 포함됩니다.")
+
+    selected_pers = []
+
+    for year in pivot.index:
+        cols = st.columns([0.5, 1, 1, 1, 1, 1])
+        checked = cols[0].checkbox("", key=f"chk_{year}")
+        cols[1].markdown(f"**{year}**")
+
+        for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"]):
+            val = pivot.loc[year, q]
+            cols[i + 2].write("-" if pd.isna(val) else f"{val:.1f}")
+
+            if checked and pd.notna(val):
+                selected_pers.append(val)
+
+    st.markdown("---")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        if st.button("② 선택 PER 평균 구하기"):
+            if not selected_pers:
+                st.warning("선택된 PER이 없습니다.")
+            else:
+                mean_per = np.mean(selected_pers)
+                st.session_state["mean_per"] = mean_per
+                st.success(f"평균 PER: **{mean_per:.2f}x**")
+
+    with col_b:
+        if st.button("③ 적정주가 구하기"):
+            if "mean_per" not in st.session_state:
+                st.warning("먼저 평균 PER을 계산하세요.")
+            else:
+                eps_sum = recent_4q_eps_sum(ticker, predict_mode)
+                if eps_sum is None:
+                    st.error("EPS 합 계산 실패")
+                else:
+                    fair_price = st.session_state["mean_per"] * eps_sum
+                    st.success(
+                        f"📌 적정주가 = {st.session_state['mean_per']:.2f} × "
+                        f"{eps_sum:.2f} = **${fair_price:.2f}**"
+                    )
+                    st.caption(f"미래 예측 옵션: {predict_mode}")
