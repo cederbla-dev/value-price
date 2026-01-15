@@ -20,6 +20,14 @@ st.set_page_config(page_title="Stock & ETF Professional Analyzer", layout="wide"
 if "v3_run" not in st.session_state:
     st.session_state.v3_run = False
 
+if "v3_select_mode" not in st.session_state:
+    st.session_state.v3_select_mode = False
+
+if "v3_selected_values" not in st.session_state:
+    st.session_state.v3_selected_values = []
+
+if "v3_per_avg" not in st.session_state:
+    st.session_state.v3_per_avg = None
 
 # --- [공통] 스타일 적용 함수 ---
 def apply_strong_style(ax, title, ylabel):
@@ -439,18 +447,11 @@ elif main_menu == "개별종목 적정주가 분석 2":
 if main_menu == "개별종목 적정주가 분석 3":
 
     with st.container(border=True):
-        col1, col2, col3 = st.columns([2, 1, 2])
+        col1, col2 = st.columns([2, 1])
         with col1:
             v3_ticker = st.text_input("🏢 티커 입력", "MSFT").upper().strip()
         with col2:
             v3_start_year = st.number_input("📅 기준 연도", 2010, 2025, 2017)
-        with col3:
-            v3_predict_mode = st.radio(
-                "🔮 미래 예측 옵션",
-                ("None", "현재 분기 예측", "다음 분기 예측"),
-                horizontal=True,
-                index=0
-            )
 
         v3_selected_metric = st.radio(
             "📈 분석 지표 선택",
@@ -458,113 +459,118 @@ if main_menu == "개별종목 적정주가 분석 3":
             horizontal=True
         )
 
-        v3_analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
-
-        # 🔥 버튼 클릭 상태 저장
-        if v3_analyze_btn:
+        if st.button("데이터 분석 실행", type="primary", use_container_width=True):
             st.session_state.v3_run = True
 
-    # 🔥 rerun 후에도 유지되는 조건
+    # ==================================================
+    # 데이터 분석 실행 상태
+    # ==================================================
     if st.session_state.v3_run and v3_ticker:
-        try:
-            with st.spinner("데이터를 분석 중입니다..."):
-                url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
-                response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-                dfs = pd.read_html(io.StringIO(response.text))
 
-                target_df = next(
-                    (df.set_index(df.columns[0]) for df in dfs
-                     if df.iloc[:, 0].astype(str).str.contains('PER|EPS').any()),
-                    None
-                )
+        url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        dfs = pd.read_html(io.StringIO(response.text))
 
-                if target_df is None:
-                    st.warning("데이터 수집 실패")
-                    st.stop()
+        target_df = next(
+            (df.set_index(df.columns[0]) for df in dfs
+             if df.iloc[:, 0].astype(str).str.contains('PER|EPS').any()),
+            None
+        )
 
-                per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
-                eps_raw = target_df[target_df.index.astype(str).str.contains('EPS')].transpose()
+        per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
+        eps_raw = target_df[target_df.index.astype(str).str.contains('EPS')].transpose()
 
-                combined = pd.DataFrame({
-                    'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
-                    'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
-                }).dropna()
+        combined = pd.DataFrame({
+            'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
+            'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
+        }).dropna()
 
-                combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
-                combined = combined.sort_index()
+        combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
+        combined = combined.sort_index()
 
-                def q_label(dt):
-                    adj = dt if dt.day > 5 else (dt - timedelta(days=5))
-                    return f"{str(adj.year)[2:]}.Q{(adj.month - 1)//3 + 1}"
+        def q_label(dt):
+            adj = dt if dt.day > 5 else (dt - timedelta(days=5))
+            return f"{str(adj.year)[2:]}.Q{(adj.month - 1)//3 + 1}"
 
-                combined['Label'] = combined.index.map(q_label)
-                plot_df = combined[combined.index >= f"{v3_start_year}-01-01"].copy()
+        combined['Label'] = combined.index.map(q_label)
+        plot_df = combined[combined.index >= f"{v3_start_year}-01-01"].copy()
 
-                # -------------------------
-                # PER 그래프 (기존 유지)
-                # -------------------------
-                if v3_selected_metric == "PER 그래프":
-                    avg_per = plot_df['PER'].mean()
-                    median_per = plot_df['PER'].median()
+        # ==================================================
+        # PER 테이블 + 버튼 UX
+        # ==================================================
+        if v3_selected_metric == "PER 테이블":
 
-                    fig, ax = plt.subplots(figsize=(9.6, 4.8))
-                    x = range(len(plot_df))
-                    ax.plot(x, plot_df['PER'], marker='o', linewidth=2.5)
-                    ax.axhline(avg_per, linestyle='--', label=f"Avg {avg_per:.1f}")
-                    ax.axhline(median_per, linestyle='-.', label=f"Median {median_per:.1f}")
+            st.subheader("📊 연도 / 분기별 PER")
 
-                    apply_strong_style(ax, f"[{v3_ticker}] PER Trend", "PER")
-                    ax.set_xticks(x)
-                    ax.set_xticklabels(plot_df['Label'], rotation=45)
-                    ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
-                    st.pyplot(fig)
+            table_df = plot_df[['Label', 'PER']].copy()
+            table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
+            table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1])
 
-                # -------------------------
-                # PER 테이블 (AgGrid)
-                # -------------------------
-                else:
-                    st.subheader(f"📊 {v3_ticker} 연도/분기별 PER 테이블")
+            pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
+            pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
+            pivot_df = pivot_df.reset_index()
 
-                    table_df = plot_df[['Label', 'PER']].copy()
-                    table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
-                    table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1])
+            # -----------------------------
+            # 버튼 영역
+            # -----------------------------
+            c1, c2, c3 = st.columns(3)
 
-                    pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
-                    pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
-                    pivot_df = pivot_df.reset_index()
+            with c1:
+                if st.button("셀 선택 시작"):
+                    st.session_state.v3_select_mode = True
+                    st.session_state.v3_selected_values = []
+                    st.session_state.v3_per_avg = None
 
-                    gb = GridOptionsBuilder.from_dataframe(pivot_df)
-                    gb.configure_grid_options(
-                        enableRangeSelection=True,
-                        enableCellTextSelection=True
-                    )
-                    gb.configure_selection(selection_mode="multiple", use_checkbox=False)
-
-                    grid_response = AgGrid(
-                        pivot_df,
-                        gridOptions=gb.build(),
-                        update_mode=GridUpdateMode.MODEL_CHANGED,
-                        allow_unsafe_jscode=True,
-                        theme="balham",
-                        height=320,
-                        fit_columns_on_grid_load=True
-                    )
-
-                    selected_cells = grid_response.get("selected_cells", [])
-                    selected_pers = [
-                        c["value"] for c in selected_cells
-                        if isinstance(c.get("value"), (int, float))
-                    ]
-
-                    if selected_pers:
-                        st.success(
-                            f"선택된 PER 개수: {len(selected_pers)} | "
-                            f"평균: {np.mean(selected_pers):.2f} | "
-                            f"중앙값: {np.median(selected_pers):.2f}"
+            with c2:
+                if st.button("평균값 계산"):
+                    if st.session_state.v3_selected_values:
+                        st.session_state.v3_per_avg = (
+                            sum(st.session_state.v3_selected_values)
+                            / len(st.session_state.v3_selected_values)
                         )
 
-        except Exception as e:
-            st.error(f"오류 발생: {e}")
+            with c3:
+                if st.button("적정주가 계산"):
+                    if st.session_state.v3_per_avg:
+                        eps_latest = plot_df['EPS'].iloc[-1]
+                        fair_price = st.session_state.v3_per_avg * eps_latest
+                        st.info(f"📌 적정주가: {fair_price:,.0f}")
+
+            # -----------------------------
+            # AgGrid
+            # -----------------------------
+            gb = GridOptionsBuilder.from_dataframe(pivot_df)
+            gb.configure_grid_options(enableRangeSelection=True)
+            gb.configure_selection(selection_mode="multiple", use_checkbox=False)
+
+            grid_response = AgGrid(
+                pivot_df,
+                gridOptions=gb.build(),
+                update_mode=GridUpdateMode.MODEL_CHANGED,
+                height=320,
+                fit_columns_on_grid_load=True
+            )
+
+            # -----------------------------
+            # 선택 모드일 때만 값 누적
+            # -----------------------------
+            if st.session_state.v3_select_mode:
+                for cell in grid_response.get("selected_cells", []):
+                    val = cell.get("value")
+                    if isinstance(val, (int, float)):
+                        if val not in st.session_state.v3_selected_values:
+                            st.session_state.v3_selected_values.append(val)
+
+            # -----------------------------
+            # 상태 출력
+            # -----------------------------
+            st.write(
+                f"선택된 셀 수: {len(st.session_state.v3_selected_values)} | "
+                f"누적 PER 합계: {sum(st.session_state.v3_selected_values):.2f}"
+            )
+
+            if st.session_state.v3_per_avg:
+                st.success(f"📊 평균 PER: {st.session_state.v3_per_avg:.2f}")
 
 
 
