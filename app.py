@@ -16,6 +16,11 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Stock & ETF Professional Analyzer", layout="wide")
 
+# session_state 초기화
+if "v3_run" not in st.session_state:
+    st.session_state.v3_run = False
+
+
 # --- [공통] 스타일 적용 함수 ---
 def apply_strong_style(ax, title, ylabel):
     ax.set_facecolor('white')
@@ -455,7 +460,12 @@ if main_menu == "개별종목 적정주가 분석 3":
 
         v3_analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
 
-    if v3_analyze_btn and v3_ticker:
+        # 🔥 버튼 클릭 상태 저장
+        if v3_analyze_btn:
+            st.session_state.v3_run = True
+
+    # 🔥 rerun 후에도 유지되는 조건
+    if st.session_state.v3_run and v3_ticker:
         try:
             with st.spinner("데이터를 분석 중입니다..."):
                 url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
@@ -491,7 +501,7 @@ if main_menu == "개별종목 적정주가 분석 3":
                 plot_df = combined[combined.index >= f"{v3_start_year}-01-01"].copy()
 
                 # -------------------------
-                # 🔸 PER 그래프 (기존 유지)
+                # PER 그래프 (기존 유지)
                 # -------------------------
                 if v3_selected_metric == "PER 그래프":
                     avg_per = plot_df['PER'].mean()
@@ -509,9 +519,9 @@ if main_menu == "개별종목 적정주가 분석 3":
                     ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
                     st.pyplot(fig)
 
-                # ------------------------------------------------
-                # 🔸 PER 테이블 (🔥 AgGrid 셀 선택 기능 추가 🔥)
-                # ------------------------------------------------
+                # -------------------------
+                # PER 테이블 (AgGrid)
+                # -------------------------
                 else:
                     st.subheader(f"📊 {v3_ticker} 연도/분기별 PER 테이블")
 
@@ -523,7 +533,6 @@ if main_menu == "개별종목 적정주가 분석 3":
                     pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
                     pivot_df = pivot_df.reset_index()
 
-                    # 🔹 AgGrid 설정
                     gb = GridOptionsBuilder.from_dataframe(pivot_df)
                     gb.configure_grid_options(
                         enableRangeSelection=True,
@@ -541,7 +550,6 @@ if main_menu == "개별종목 적정주가 분석 3":
                         fit_columns_on_grid_load=True
                     )
 
-                    # 🔹 선택된 PER 값 추출
                     selected_cells = grid_response.get("selected_cells", [])
                     selected_pers = [
                         c["value"] for c in selected_cells
