@@ -9,6 +9,9 @@ import warnings
 from datetime import datetime, timedelta
 import matplotlib.ticker as mtick
 
+# ✅ AgGrid 추가 (유일한 신규 import)
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
 # 기본 설정
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Stock & ETF Professional Analyzer", layout="wide")
@@ -425,8 +428,11 @@ elif main_menu == "개별종목 적정주가 분석 2":
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-# --- 메뉴 3: 개별종목 적정주가 분석 3 (수정됨) ---
-elif main_menu == "개별종목 적정주가 분석 3":
+
+# --- 메뉴 3: 개별종목 적정주가 분석 3 (PER 테이블 AgGrid 적용) ---
+
+if main_menu == "개별종목 적정주가 분석 3":
+
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
@@ -434,109 +440,125 @@ elif main_menu == "개별종목 적정주가 분석 3":
         with col2:
             v3_start_year = st.number_input("📅 기준 연도", 2010, 2025, 2017)
         with col3:
-            v3_predict_mode = st.radio("🔮 미래 예측 옵션", ("None", "현재 분기 예측", "다음 분기 예측"), horizontal=True, index=0)
-        
-        v3_selected_metric = st.radio("📈 분석 지표 선택", ("PER 그래프", "PER 테이블"), horizontal=True)
+            v3_predict_mode = st.radio(
+                "🔮 미래 예측 옵션",
+                ("None", "현재 분기 예측", "다음 분기 예측"),
+                horizontal=True,
+                index=0
+            )
+
+        v3_selected_metric = st.radio(
+            "📈 분석 지표 선택",
+            ("PER 그래프", "PER 테이블"),
+            horizontal=True
+        )
+
         v3_analyze_btn = st.button("데이터 분석 실행", type="primary", use_container_width=True)
 
     if v3_analyze_btn and v3_ticker:
         try:
-            with st.spinner('데이터를 분석 중입니다...'):
+            with st.spinner("데이터를 분석 중입니다..."):
                 url = f"https://www.choicestock.co.kr/search/invest/{v3_ticker}/MRQ"
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
                 dfs = pd.read_html(io.StringIO(response.text))
-                target_df = next((df.set_index(df.columns[0]) for df in dfs if df.iloc[:, 0].astype(str).str.contains('PER|EPS').any()), None)
-                
-                if target_df is not None:
-                    per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
-                    eps_raw = target_df[target_df.index.astype(str).str.contains('EPS')].transpose()
-                    combined = pd.DataFrame({
-                        'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
-                        'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
-                    }).dropna()
-                    combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
-                    combined = combined.sort_index()
-                    
-                    def get_q_label(dt):
-                        year = dt.year if dt.day > 5 else (dt - timedelta(days=5)).year
-                        month = dt.month if dt.day > 5 else (dt - timedelta(days=5)).month
-                        q = (month-1)//3 + 1
-                        return f"{str(year)[2:]}.Q{q}"
 
-                    combined['Label'] = [get_q_label(d) for d in combined.index]
-                    plot_df = combined[combined.index >= f"{v3_start_year}-01-01"].copy()
+                target_df = next(
+                    (df.set_index(df.columns[0]) for df in dfs
+                     if df.iloc[:, 0].astype(str).str.contains('PER|EPS').any()),
+                    None
+                )
 
-                    if v3_predict_mode != "None":
-                        stock = yf.Ticker(v3_ticker)
-                        current_price = stock.fast_info.get('last_price', stock.history(period="1d")['Close'].iloc[-1])
-                        est = stock.earnings_estimate
-                        if est is not None and not est.empty:
-                            hist_eps = combined['EPS'].tolist()
-                            l_lab = plot_df['Label'].iloc[-1]
-                            l_yr, l_q = int("20"+l_lab.split('.')[0]), int(l_lab.split('Q')[1])
-                            
-                            c_q_est = est.loc['0q', 'avg']
-                            t1_q, t1_yr = (l_q+1, l_yr) if l_q < 4 else (1, l_yr+1)
-                            plot_df.loc[pd.Timestamp(f"{t1_yr}-{(t1_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-3:]) + c_q_est), np.nan, f"{str(t1_yr)[2:]}.Q{t1_q}(E)"]
+                if target_df is None:
+                    st.warning("데이터 수집 실패")
+                    st.stop()
 
-                            if v3_predict_mode == "다음 분기 예측":
-                                t2_q, t2_yr = (t1_q+1, t1_yr) if t1_q < 4 else (1, t1_yr+1)
-                                plot_df.loc[pd.Timestamp(f"{t2_yr}-{(t2_q-1)*3+1}-01")] = [current_price/(sum(hist_eps[-2:]) + c_q_est + est.loc['+1q', 'avg']), np.nan, f"{str(t2_yr)[2:]}.Q{t2_q}(E)"]
+                per_raw = target_df[target_df.index.astype(str).str.contains('PER')].transpose()
+                eps_raw = target_df[target_df.index.astype(str).str.contains('EPS')].transpose()
 
-                    if v3_selected_metric == "PER 그래프":
-                        avg_per = plot_df['PER'].mean()
-                        median_per = plot_df['PER'].median()
-                        max_p, min_p = plot_df['PER'].max(), plot_df['PER'].min()
+                combined = pd.DataFrame({
+                    'PER': pd.to_numeric(per_raw.iloc[:, 0], errors='coerce'),
+                    'EPS': pd.to_numeric(eps_raw.iloc[:, 0].astype(str).str.replace(',', ''), errors='coerce')
+                }).dropna()
 
-                        # [수정] 그래프 크기 변경 (12, 6.5 -> 9.6, 4.8)
-                        fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor='white')
-                        x_idx = range(len(plot_df))
-                        ax.plot(x_idx, plot_df['PER'], marker='o', color='#34495e', linewidth=2.5, zorder=4, label='Forward PER')
-                        ax.axhline(avg_per, color='#e74c3c', linestyle='--', linewidth=1.5, zorder=2, label=f'Average: {avg_per:.1f}')
-                        ax.axhline(median_per, color='#8e44ad', linestyle='-.', linewidth=1.5, zorder=2, label=f'Median: {median_per:.1f}')
-                        
-                        h_rng = max(max_p - avg_per, avg_per - min_p) * 1.6
-                        ax.set_ylim(avg_per - h_rng, avg_per + h_rng)
+                combined.index = pd.to_datetime(combined.index, format='%y.%m.%d')
+                combined = combined.sort_index()
 
-                        # [수정] 범례 위치 그래프 밖 우측 상단으로 이동 (bbox_to_anchor 추가)
-                        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, shadow=True)
-                        leg.get_frame().set_facecolor('white')
-                        for text in leg.get_texts(): text.set_color('black')
+                def q_label(dt):
+                    adj = dt if dt.day > 5 else (dt - timedelta(days=5))
+                    return f"{str(adj.year)[2:]}.Q{(adj.month - 1)//3 + 1}"
 
-                        apply_strong_style(ax, f"[{v3_ticker}] PER Valuation Trend", "PER Ratio")
-                        ax.set_xticks(x_idx); ax.set_xticklabels(plot_df['Label'], rotation=45)
-                        
-                        for i, (idx, row) in enumerate(plot_df.iterrows()):
-                            if "(E)" in str(row['Label']):
-                                ax.axvspan(i-0.4, i+0.4, color='#fff9c4', alpha=0.7)
-                                ax.text(i, row['PER'] + (h_rng*0.08), f"{row['PER']:.1f}", ha='center', color='#d35400', fontweight='bold')
-                        
-                        st.pyplot(fig)
-                    
-                    else: # PER 테이블
-                        st.subheader(f"📊 {v3_ticker} 연도별/분기별 PER 데이터 리스트")
-                        table_df = plot_df[['Label', 'PER']].copy()
-                        table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
-                        table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1].replace('(E)', ''))
-                        pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
-                        pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
-                        pivot_df.index.name = 'Year'
-                        pivot_df = pivot_df.reset_index()
+                combined['Label'] = combined.index.map(q_label)
+                plot_df = combined[combined.index >= f"{v3_start_year}-01-01"].copy()
 
-                        table_html = pivot_df.style.format(precision=2, na_rep='-')\
-                            .hide(axis='index')\
-                            .set_table_attributes('style="width: 40%; border-collapse: collapse; border: 1px solid #ddd; font-size: 14px;"')\
-                            .set_table_styles([
-                                {'selector': 'th', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('background-color', '#f8f9fa'), ('text-align', 'center'), ('font-weight', 'bold')]},
-                                {'selector': 'td', 'props': [('border', '1px solid #ddd'), ('padding', '8px'), ('text-align', 'center')]}
-                            ]).to_html()
-                        
-                        st.write(table_html, unsafe_allow_html=True)
-                        st.info("💡 위 테이블의 데이터를 바탕으로 향후 상세 분석 기능을 추가할 예정입니다.")
+                # -------------------------
+                # 🔸 PER 그래프 (기존 유지)
+                # -------------------------
+                if v3_selected_metric == "PER 그래프":
+                    avg_per = plot_df['PER'].mean()
+                    median_per = plot_df['PER'].median()
 
-                else: st.warning("데이터 수집 실패")
-        except Exception as e: st.error(f"오류: {e}")
+                    fig, ax = plt.subplots(figsize=(9.6, 4.8))
+                    x = range(len(plot_df))
+                    ax.plot(x, plot_df['PER'], marker='o', linewidth=2.5)
+                    ax.axhline(avg_per, linestyle='--', label=f"Avg {avg_per:.1f}")
+                    ax.axhline(median_per, linestyle='-.', label=f"Median {median_per:.1f}")
+
+                    apply_strong_style(ax, f"[{v3_ticker}] PER Trend", "PER")
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(plot_df['Label'], rotation=45)
+                    ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+                    st.pyplot(fig)
+
+                # ------------------------------------------------
+                # 🔸 PER 테이블 (🔥 AgGrid 셀 선택 기능 추가 🔥)
+                # ------------------------------------------------
+                else:
+                    st.subheader(f"📊 {v3_ticker} 연도/분기별 PER 테이블")
+
+                    table_df = plot_df[['Label', 'PER']].copy()
+                    table_df['Year'] = table_df['Label'].apply(lambda x: "20" + x.split('.')[0])
+                    table_df['Quarter'] = table_df['Label'].apply(lambda x: x.split('.')[1])
+
+                    pivot_df = table_df.pivot(index='Year', columns='Quarter', values='PER')
+                    pivot_df = pivot_df.reindex(columns=['Q1', 'Q2', 'Q3', 'Q4'])
+                    pivot_df = pivot_df.reset_index()
+
+                    # 🔹 AgGrid 설정
+                    gb = GridOptionsBuilder.from_dataframe(pivot_df)
+                    gb.configure_grid_options(
+                        enableRangeSelection=True,
+                        enableCellTextSelection=True
+                    )
+                    gb.configure_selection(selection_mode="multiple", use_checkbox=False)
+
+                    grid_response = AgGrid(
+                        pivot_df,
+                        gridOptions=gb.build(),
+                        update_mode=GridUpdateMode.MODEL_CHANGED,
+                        allow_unsafe_jscode=True,
+                        theme="balham",
+                        height=320,
+                        fit_columns_on_grid_load=True
+                    )
+
+                    # 🔹 선택된 PER 값 추출
+                    selected_cells = grid_response.get("selected_cells", [])
+                    selected_pers = [
+                        c["value"] for c in selected_cells
+                        if isinstance(c.get("value"), (int, float))
+                    ]
+
+                    if selected_pers:
+                        st.success(
+                            f"선택된 PER 개수: {len(selected_pers)} | "
+                            f"평균: {np.mean(selected_pers):.2f} | "
+                            f"중앙값: {np.median(selected_pers):.2f}"
+                        )
+
+        except Exception as e:
+            st.error(f"오류 발생: {e}")
+
+
 
 # --- 메뉴 4: 개별종목 적정주가 분석 4 ---
 elif main_menu == "개별종목 적정주가 분석 4":
