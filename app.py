@@ -313,7 +313,7 @@ elif main_menu == "개별종목 적정주가 분석 2":
         # vertical_alignment="bottom"을 추가하여 입력창과 버튼의 높이를 정렬합니다.
         col1, col2, col3 = st.columns([0.5, 0.5, 1], vertical_alignment="bottom")
         with col1:
-            v2_ticker = st.text_input("🏢 분석 티커 입력", "AAPL").upper().strip()
+            v2_ticker = st.text_input("🏢 분석 티커 입력", "GOOGL").upper().strip()
         with col2:
             # 기존의 st.write("") 공백 제거 후 버튼 배치
             run_v2 = st.button("당해 EPS 기반 분석", type="primary", use_container_width=True)
@@ -430,7 +430,7 @@ elif main_menu == "개별종목 적정주가 분석 3":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
-            v3_ticker = st.text_input("🏢 티커 입력", "MSFT").upper().strip()
+            v3_ticker = st.text_input("🏢 티커 입력", "GOOGL").upper().strip()
         with col2:
             v3_start_year = st.number_input("📅 기준 연도", 2010, 2025, 2017)
         with col3:
@@ -541,7 +541,7 @@ elif main_menu == "개별종목 적정주가 분석 3":
 # --- 메뉴 4: 개별종목 적정주가 분석 4 ---
 elif main_menu == "개별종목 적정주가 분석 4":
     with st.container(border=True):
-        v4_ticker = st.text_input("🏢 분석 티커 입력 (PEG 분석)", "AAPL").upper().strip()
+        v4_ticker = st.text_input("🏢 분석 티커 입력 (PEG 분석)", "GOOGL").upper().strip()
         run_v4 = st.button("연도별 정밀 PEG 분석 실행", type="primary", use_container_width=True)
 
     if run_v4 and v4_ticker:
@@ -690,7 +690,7 @@ elif main_menu == "기업 가치 비교 (PER/EPS)":
     with st.container(border=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
-            ticker_input = st.text_input("🏢 티커 입력", "AAPL, MSFT, GOOGL")
+            ticker_input = st.text_input("🏢 티커 입력", "GOOGL, GOOGL, GOOGL")
         with col2:
             start_year = st.number_input("📅 기준 연도", 2010, 2025, 2020)
         with col3:
